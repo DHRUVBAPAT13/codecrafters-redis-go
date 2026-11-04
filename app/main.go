@@ -29,11 +29,13 @@ func (item Item) IsExpired() bool {
 type Store struct {
 	mu   sync.RWMutex
 	data map[string]Item
+	lists map[string][]string
 }
 
 func NewStore() *Store {
 	return &Store{
 		data: make(map[string]Item),
+		lists: make(map[string][]string),
 	}
 }
 
@@ -70,6 +72,14 @@ func (s *Store) Get(key string) (string, bool) {
 	}
 
 	return item.value, true
+}
+
+func (s *Store) RPush(key string, values ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.lists[key] = append(s.lists[key], values...)
+	return len(s.lists[key])
 }
 
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
@@ -205,6 +215,18 @@ func handleClient(conn net.Conn, store *Store) {
 				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
 				_, _ = conn.Write([]byte(resp))
 			}
+
+		case "RPUSH":
+			
+			if len(args) < 3 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'rpush' command\r\n"))
+				continue
+			}
+			key := args[1]
+			// args[2:] naturally supports one or multiple elements
+			newLen := store.RPush(key, args[2:]...)
+			resp := fmt.Sprintf(":%d\r\n", newLen)
+			_, _ = conn.Write([]byte(resp))
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
