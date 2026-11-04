@@ -10,31 +10,66 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
+
+type Item struct {
+	value      string
+	expiresAt time.Time	// zero time means no expiration
+}
+
+func (item Item) IsExpired() bool {
+	if item.expiresAt.IsZero() {
+		return false
+	}
+	return time.Now().After(item.expiresAt)
+}
 
 // In-memory key-value store with read-write mutex for concurrency safety
 type Store struct {
 	mu   sync.RWMutex
-	data map[string]string
+	data map[string]Item
 }
 
 func NewStore() *Store {
 	return &Store{
-		data: make(map[string]string),
+		data: make(map[string]Item),
 	}
 }
 
-func (s *Store) Set(key, value string) {
+func (s *Store) Set(key, value string, ttl time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[key] = value
+
+	var expiresAt time.Time
+	if ttl > 0 {
+		expiresAt = time.Now().Add(ttl)
+	}
+
+	s.data[key] = Item{
+		value:      value,
+		expiresAt: expiresAt,
+	}
 }
 
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	val, ok := s.data[key]
-	return val, ok
+	item, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return "", false
+	}
+
+	if item.IsExpired() {
+		// passive deletion
+		s.mu.Lock()
+		delete(s.data, key)
+		s.mu.Unlock()
+		return "", false
+	}
+
+	return item.value, true
 }
 
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
@@ -131,7 +166,29 @@ func handleClient(conn net.Conn, store *Store) {
 			}
 			key := args[1]
 			val := args[2]
-			store.Set(key, val)
+			var ttl time.Duration
+
+			// Parse optional arguments (case-insensitive) like PX <ms> or EX <s>
+			for i := 3; i < len(args); i++ {
+
+				opt := strings.ToUpper(args[i])
+				
+				if opt == "PX" && i+1 < len(args) {
+					ms, err := strconv.ParseInt(args[i+1], 10, 64)
+					if err == nil {
+						ttl = time.Duration(ms) * time.Millisecond
+					}
+					i++
+				} else if opt == "EX" && i+1 < len(args) {
+					sec, err := strconv.ParseInt(args[i+1], 10, 64)
+					if err == nil {
+						ttl = time.Duration(sec) * time.Second
+					}
+					i++
+				}
+			}
+
+			store.Set(key, val, ttl)
 			_, _ = conn.Write([]byte("+OK\r\n"))
 
 		case "GET":
