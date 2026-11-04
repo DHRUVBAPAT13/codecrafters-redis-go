@@ -74,7 +74,7 @@ func (s *Store) Get(key string) (string, bool) {
 	return item.value, true
 }
 
-func (s *Store) RPush(key string, values ...string) {
+func (s *Store) RPush(key string, values ...string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -217,7 +217,7 @@ func handleClient(conn net.Conn, store *Store) {
 			}
 
 		case "RPUSH":
-			
+
 			if len(args) < 3 {
 				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'rpush' command\r\n"))
 				continue
