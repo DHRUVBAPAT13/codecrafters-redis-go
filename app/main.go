@@ -9,8 +9,35 @@ import (
 	"bufio"
 	"strings"
 	"strconv"
+	"sync"
 )
 
+// in-memory key-value store with read-write mutex for concurrent access
+type Store struct {
+	data map[string]string
+	mu   sync.RWMutex
+}
+
+func NewStore() *Store {
+	return &Store{
+		data: make(map[string]string),
+	}
+}
+
+func (s *Store) Set(key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data[key] = value
+}
+
+func (s *Store) Get(key string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	val, ok := s.data[key]
+	return val, ok
+}
+
+// readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
 func readRESPArray(reader *bufio.Reader) ([]string, error) {
 
 	line, err := reader.ReadString('\n')
@@ -115,6 +142,34 @@ func handleClient(conn net.Conn) {
 			resp := fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg)
 			_, _ = conn.Write([]byte(resp))
 
+
+		case "SET":
+			if len(args) < 3 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'set' command\r\n"))
+				continue
+			}
+			key := args[1]
+			value := args[2]
+			store.Set(key, value)
+			_, _ = conn.Write([]byte("+OK\r\n"))
+
+		case "GET":
+			if len(args) < 2 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'get' command\r\n"))
+				continue
+			}
+			key := args[1]
+			val, ok := store.Get(key)
+			
+			if !ok {
+				// null bulk string for missing keys
+				_, _ = conn.Write([]byte("$-1\r\n"))
+			}
+			else {
+				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
+				_, _ = conn.Write([]byte(resp))
+			}
+
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
 			_, _ = conn.Write([]byte(errMsg))
@@ -123,6 +178,8 @@ func handleClient(conn net.Conn) {
 }
 
 func main() {
+
+	store = NewStore()
 	
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 
