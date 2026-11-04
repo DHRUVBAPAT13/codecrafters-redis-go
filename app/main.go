@@ -143,6 +143,18 @@ func (s *Store) LRange(key string, start, stop int) []string {
 	return result
 }
 
+func (s *Store) LLen(key string) int {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	list, ok := s.lists[key]
+	if !ok {
+		return 0
+	}
+	return len(list)
+}
+
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
 func readRESPArray(reader *bufio.Reader) ([]string, error) {
 	line, err := reader.ReadString('\n')
@@ -327,6 +339,16 @@ func handleClient(conn net.Conn, store *Store) {
 				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(item), item))
 			}
 			_, _ = conn.Write([]byte(resp.String()))
+
+		case "LLEN":
+			if len(args) < 2 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'llen' command\r\n"))
+				continue
+			}
+			key := args[1]
+			length := store.LLen(key)
+			resp := fmt.Sprintf(":%d\r\n", length)
+			_, _ = conn.Write([]byte(resp))
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
