@@ -178,7 +178,7 @@ func handleClient(conn net.Conn) {
 
 func main() {
 
-	store = NewStore()
+	store := NewStore()
 	
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 
