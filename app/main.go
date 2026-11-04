@@ -1,21 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
-	"io"
-	"bufio"
-	"strings"
 	"strconv"
+	"strings"
 	"sync"
 )
 
-// in-memory key-value store with read-write mutex for concurrent access
+// In-memory key-value store with read-write mutex for concurrency safety
 type Store struct {
-	data map[string]string
 	mu   sync.RWMutex
+	data map[string]string
 }
 
 func NewStore() *Store {
@@ -39,13 +39,11 @@ func (s *Store) Get(key string) (string, bool) {
 
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
 func readRESPArray(reader *bufio.Reader) ([]string, error) {
-
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return nil, err
 	}
 
-	// clean trailing \r\n
 	line = strings.TrimSuffix(line, "\r\n")
 	line = strings.TrimSuffix(line, "\n")
 
@@ -53,25 +51,18 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 		return nil, nil
 	}
 
-	// commands sent by client start with '*' (Array)
 	if line[0] != '*' {
-		// fallback for simple inline raw commands (e.g. telnet "PING\r\n")
 		parts := strings.Fields(line)
 		return parts, nil
 	}
 
-	//  parse the number of elements in array: *<num>
 	count, err := strconv.Atoi(line[1:])
-
 	if err != nil {
-		return nil, fmt.Errorf("invalid array length: %v", err)
+		return nil, fmt.Errorf("invalid array length: %w", err)
 	}
 
 	args := make([]string, 0, count)
-
 	for i := 0; i < count; i++ {
-
-		// read the bulk string header: $<length>\r\n
 		header, err := reader.ReadString('\n')
 		if err != nil {
 			return nil, err
@@ -85,35 +76,29 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 
 		length, err := strconv.Atoi(header[1:])
 		if err != nil {
-			return nil, fmt.Errorf("invalid bulk string length: %v", err)
+			return nil, fmt.Errorf("invalid bulk string length: %w", err)
 		}
 
-		// read exact byte length of data + 2 bytes for \r\n
 		dataBuf := make([]byte, length+2)
 		_, err = io.ReadFull(reader, dataBuf)
-
 		if err != nil {
 			return nil, err
 		}
 
-		// discard trailing \r\n and append payload
 		args = append(args, string(dataBuf[:length]))
 	}
 
 	return args, nil
 }
 
-func handleClient(conn net.Conn) {
+func handleClient(conn net.Conn, store *Store) {
 	defer conn.Close()
-
 	reader := bufio.NewReader(conn)
 
 	for {
 		args, err := readRESPArray(reader)
-
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				// client closed the connection
 				break
 			}
 			fmt.Println("Connection read error:", err.Error())
@@ -121,27 +106,23 @@ func handleClient(conn net.Conn) {
 		}
 
 		if len(args) == 0 {
-			// empty command, ignore
 			continue
 		}
 
-		// Redis commands are case-insensitive
 		cmd := strings.ToUpper(args[0])
 
 		switch cmd {
 		case "PING":
 			_, _ = conn.Write([]byte("+PONG\r\n"))
-		
+
 		case "ECHO":
 			if len(args) < 2 {
 				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'echo' command\r\n"))
 				continue
 			}
 			arg := args[1]
-			// format RESP bulk string : $<len>\r\n<arg>\r\n
 			resp := fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg)
 			_, _ = conn.Write([]byte(resp))
-
 
 		case "SET":
 			if len(args) < 3 {
@@ -149,8 +130,8 @@ func handleClient(conn net.Conn) {
 				continue
 			}
 			key := args[1]
-			value := args[2]
-			store.Set(key, value)
+			val := args[2]
+			store.Set(key, val)
 			_, _ = conn.Write([]byte("+OK\r\n"))
 
 		case "GET":
@@ -160,9 +141,8 @@ func handleClient(conn net.Conn) {
 			}
 			key := args[1]
 			val, ok := store.Get(key)
-			
 			if !ok {
-				// null bulk string for missing keys
+				// Null Bulk String for missing keys
 				_, _ = conn.Write([]byte("$-1\r\n"))
 			} else {
 				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
@@ -177,18 +157,15 @@ func handleClient(conn net.Conn) {
 }
 
 func main() {
-
 	store := NewStore()
-	
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
 
+	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379:", err.Error())
 		os.Exit(1)
 	}
 	defer l.Close()
 
-	
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -196,7 +173,6 @@ func main() {
 			continue
 		}
 
-		// spawn a goroutine for each client so they run concurrently
-		go handleClient(conn)
+		go handleClient(conn, store)
 	}
 }
