@@ -19,8 +19,8 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 	}
 
 	// clean trailing \r\n
-	line = strings.TrimSpace(line, "\r\n")
-	line = strings.TrimSpace(line, "\n")
+	line = strings.TrimSuffix(line, "\r\n")
+	line = strings.TrimSuffix(line, "\n")
 
 	if len(line) == 0 {
 		return nil, nil
@@ -49,8 +49,8 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		header = strings.TrimSpace(header, "\r\n")
-		header = strings.TrimSpace(header, "\n")
+		header = strings.TrimSuffix(header, "\r\n")
+		header = strings.TrimSuffix(header, "\n")
 
 		if len(header) == 0 || header[0] != '$' {
 			return nil, fmt.Errorf("expected bulk string prefix '$', got: %s", header)
