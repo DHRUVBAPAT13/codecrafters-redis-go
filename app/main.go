@@ -29,7 +29,7 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 	// commands sent by client start with '*' (Array)
 	if line[0] != '*' {
 		// fallback for simple inline raw commands (e.g. telnet "PING\r\n")
-		parts := stirngs.Fields(line)
+		parts := strings.Fields(line)
 		return parts, nil
 	}
 
