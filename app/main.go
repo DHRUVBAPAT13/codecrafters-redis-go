@@ -83,6 +83,23 @@ func (s *Store) RPush(key string, values ...string) int {
 	return len(s.lists[key])
 }
 
+func (s *Store) LPush(key string, values ...string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// LPush inserts form left to right one by one,
+	// so the last argument ends up at the very front (index 0)
+	// Example: LPush key "a" "b" "c" -> ["c" "b" "a"]
+	reversed := make([]string, len(values))
+	for i, v := range values {
+		reversed[len(values)-1-i] = v
+	}
+
+	s.lists[key] = append(reversed, s.lists[key]...)
+
+	return len(s.lists[key])
+}
+
 func (s *Store) LRange(key string, start, stop int) []string {
 
 	s.mu.RLock()
@@ -269,6 +286,17 @@ func handleClient(conn net.Conn, store *Store) {
 			key := args[1]
 			// args[2:] naturally supports one or multiple elements
 			newLen := store.RPush(key, args[2:]...)
+			resp := fmt.Sprintf(":%d\r\n", newLen)
+			_, _ = conn.Write([]byte(resp))
+
+		case "LPUSH":
+			if len(args) < 3 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'lpush' command\r\n"))
+				continue
+			}
+			key := args[1]
+			// args[2:] naturally supports one or multiple elements
+			newLen := store.LPush(key, args[2:]...)
 			resp := fmt.Sprintf(":%d\r\n", newLen)
 			_, _ = conn.Write([]byte(resp))
 
