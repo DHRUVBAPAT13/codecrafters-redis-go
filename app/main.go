@@ -75,11 +75,42 @@ func (s *Store) Get(key string) (string, bool) {
 }
 
 func (s *Store) RPush(key string, values ...string) int {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.lists[key] = append(s.lists[key], values...)
 	return len(s.lists[key])
+}
+
+func (s *Store) LRange(key string, start, stop int) []string {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	list, ok := s.lists[key]
+	if !ok || len(list) == 0 {
+		return nil
+	}
+
+	n := len(list)
+
+	// if start is out of range or start > stop, return empty
+	if start >= n || start > stop {
+		return []string{}
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	if stop>= n {
+		stop = n - 1
+	}
+
+	result := make([]string, stop-start+1)
+	copy(result, list[start:stop+1])
+	return result
 }
 
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
@@ -227,6 +258,34 @@ func handleClient(conn net.Conn, store *Store) {
 			newLen := store.RPush(key, args[2:]...)
 			resp := fmt.Sprintf(":%d\r\n", newLen)
 			_, _ = conn.Write([]byte(resp))
+
+		case "LRANGE":
+
+			if len(args) < 4 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'lrange' command\r\n"))
+				continue
+			}
+
+			key := args[1]
+			start, err1 := strconv.Atoi(args[2])
+			stop, err2 := strconv.Atoi(args[3])
+
+			if err1 != nil || err2 != nil {
+				_, _ = conn.Write([]byte("-ERR value is not an integer or out of range\r\n"))
+				continue
+			}
+
+			items := store.LRange(key, start, stop)
+
+			// format as RESP Array *<count>\r\n$<len>\r\n<item>\r\n...
+
+			var resp strings.Builder
+			resp.WriteString(fmt.Sprintf("*%d\r\n", len(items)))
+			
+			for _, item := range items {
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(item), item))
+			}
+			_, _ = conn.Write([]byte(resp.String()))
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
