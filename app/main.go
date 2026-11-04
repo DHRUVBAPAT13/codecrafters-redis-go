@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"io"
 )
 
 func main() {
@@ -25,15 +27,29 @@ func main() {
 
 	// Read the incoming PING command bytes from client
 	buf := make([]byte, 1024)
-	_, err = conn.Read(buf)
-	if err != nil {
-		fmt.Println("Error reading from connection:", err.Error())
-		return
-	}
 
-	// Respond with RESP Simple String: +PONG\r\n
-	_, err = conn.Write([]byte("+PONG\r\n"))
-	if err != nil {
-		fmt.Println("Error writing response:", err.Error())
+	for {
+		n, err := conn.Read(buf)
+
+		if err != nil {
+
+			if errors.Is(err, io.EOF) {
+				fmt.Println("Client closed the connection")
+				break
+			}
+			fmt.Println("Error reading from connection:", err.Error())
+			break
+		}
+		if n == 0 {
+			continue
+		}
+
+		// respond with +PONG\r\n for each received command
+		_, err = conn.Write([]byte("+PONG\r\n"))
+
+		if err != nil {
+			fmt.Println("Error writing response:", err.Error())
+			break
+		}
 	}
 }
