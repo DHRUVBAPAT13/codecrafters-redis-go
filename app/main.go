@@ -164,8 +164,7 @@ func handleClient(conn net.Conn) {
 			if !ok {
 				// null bulk string for missing keys
 				_, _ = conn.Write([]byte("$-1\r\n"))
-			}
-			else {
+			} else {
 				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
 				_, _ = conn.Write([]byte(resp))
 			}
