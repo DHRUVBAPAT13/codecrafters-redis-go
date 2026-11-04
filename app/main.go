@@ -95,16 +95,29 @@ func (s *Store) LRange(key string, start, stop int) []string {
 
 	n := len(list)
 
-	// if start is out of range or start > stop, return empty
+	// convert negative start index
+	if start < 0 {
+		start = n + start
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	// convert negative stop index
+	if stop < 0 {
+		stop = n + stop
+		if stop < 0 {
+			stop = 0
+		}
+	}
+
+	// standard Redis boundary checks after normalization
 	if start >= n || start > stop {
 		return []string{}
 	}
 
-	if start < 0 {
-		start = 0
-	}
-
-	if stop>= n {
+	// clamp stop at last element
+	if stop >= n {
 		stop = n - 1
 	}
 
