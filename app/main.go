@@ -226,7 +226,13 @@ func handleClient(conn net.Conn, store *Store) {
 				fields[args[i]] = args[i+1]
 			}
 
-			entryID := store.XAdd(key, id, fields)
+			entryID, err := store.XAdd(key, id, fields)
+
+			if err != nil {
+				resp := fmt.Sprintf("-%s\r\n", err.Error())
+				_, _ = conn.Write([]byte(resp))
+				continue
+			}
 
 			// Response is the entry ID encoded as a bulk string
 			resp := fmt.Sprintf("$%d\r\n%s\r\n", len(entryID), entryID)
