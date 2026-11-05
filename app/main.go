@@ -16,6 +16,9 @@ func handleClient(conn net.Conn, store *Store) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
+	inTx := false
+	var txQueue [][]string
+
 	for {
 		args, err := readRESPArray(reader)
 		if err != nil {
@@ -447,6 +450,16 @@ func handleClient(conn net.Conn, store *Store) {
 
 			resp := fmt.Sprintf(":%d\r\n", newVal)
 			_, _ = conn.Write([]byte(resp))
+
+		case "MULTI":
+
+			if inTx {
+				_, _ = conn.Write([]byte("-ERR Multi calls cannot be nested"))
+				continue
+			}
+			inTx = true
+			txQueue = make([][]string, 0)
+			_, _ = conn.Write([]byte("+OK\r\n"))
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
