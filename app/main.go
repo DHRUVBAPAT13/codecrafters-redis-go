@@ -17,7 +17,6 @@ func handleClient(conn net.Conn, store *Store) {
 	reader := bufio.NewReader(conn)
 
 	inTx := false
-	var txQueue [][]string
 
 	for {
 		args, err := readRESPArray(reader)
@@ -458,7 +457,6 @@ func handleClient(conn net.Conn, store *Store) {
 				continue
 			}
 			inTx = true
-			txQueue = make([][]string, 0)
 			_, _ = conn.Write([]byte("+OK\r\n"))
 
 		default:
