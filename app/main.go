@@ -246,7 +246,7 @@ func (s *Store) BLPop(key string, timeout time.Duration) (string, bool) {
 
 	case <-time.After(timeout):
 		// clean up channel from s.blocked on timeout
-		s.mu.Unlock()
+		s.mu.Lock()
 		waiters := s.blocked[key]
 		for i, waiter := range waiters {
 			if waiter == ch {
