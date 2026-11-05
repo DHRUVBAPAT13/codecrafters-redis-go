@@ -21,6 +21,7 @@ type Store struct {
 	mu      sync.RWMutex
 	data    map[string]Item
 	lists   map[string][]string
+	streams map[string]*Stream
 	blocked map[string][]chan string
 }
 
@@ -28,6 +29,7 @@ func NewStore() *Store {
 	return &Store{
 		data:    make(map[string]Item),
 		lists:   make(map[string][]string),
+		streams: make(map[string]*Stream),
 		blocked: make(map[string][]chan string),
 	}
 }
@@ -81,6 +83,10 @@ func (s *Store) Type(key string) string {
 	// check list data
 	if list, ok := s.lists[key]; ok && len(list) > 0 {
 		return "list"
+	}
+
+	if stream, ok := s.streams[key]; ok && len(stream.Entries) > 0 {
+		return "stream"
 	}
 
 	return "none"

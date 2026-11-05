@@ -209,6 +209,29 @@ func handleClient(conn net.Conn, store *Store) {
 			resp := fmt.Sprintf("+%s\r\n", t)
 			_, _ = conn.Write([]byte(resp))
 
+		case "XADD":
+
+			// Expected format: XADD key id field1 value1 [field2 value2 ...]
+			// Minimum args: 4 (e.g. XADD stream 0-1 foo bar)
+			if len(args) < 4 || (len(args)-3)%2 != 0 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'xadd' command\r\n"))
+				continue
+			}
+
+			key := args[1]
+			id := args[2]
+
+			fields := make(map[string]string)
+			for i := 3; i < len(args); i += 2 {
+				fields[args[i]] = args[i+1]
+			}
+
+			entryID := store.XAdd(key, id, fields)
+
+			// Response is the entry ID encoded as a bulk string
+			resp := fmt.Sprintf("$%d\r\n%s\r\n", len(entryID), entryID)
+			_, _ = conn.Write([]byte(resp))
+
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
 			_, _ = conn.Write([]byte(errMsg))
