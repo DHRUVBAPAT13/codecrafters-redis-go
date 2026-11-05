@@ -278,6 +278,94 @@ func handleClient(conn net.Conn, store *Store) {
 
 			_, _ = conn.Write([]byte(resp.String()))
 
+		case "XREAD":
+			// find "STREAMS" keyword (case-sensitive)
+			streamsIdx := -1
+			for i := 1; i < len(args); i++ {
+				if strings.ToUpper(args[i]) == "STREAMS" {
+					streamsIdx = 1
+					break
+				}
+			}
+
+			if streamsIdx == -1 || streamsIdx == len(args)-1 {
+				_, _ = conn.Write([]byte("-ERR syntax error\r\n"))
+				continue
+			}
+
+			streamArgs := args[streamsIdx+1:]
+			if len(streamArgs)%2 != 0 {
+				_, _ = conn.Write([]byte("-ERR syntax error, unmatched keys and IDs\r\n"))
+			}
+
+			numStreams := len(streamArgs) / 2
+			keys := streamArgs[:numStreams]
+			ids := streamArgs[numStreams:]
+
+			type streamResult struct {
+				key     string
+				entries []StreamEntry
+			}
+
+			var results []streamResult
+			var readErr error
+
+			for i := 0; i < numStreams; i++ {
+				entries, err := store.XRead(keys[i], ids[i])
+				if err != nil {
+					readErr = err
+					break
+				}
+				if len(entries) > 0 {
+					results = append(results, streamResult{
+						key:     keys[i],
+						entries: entries,
+					})
+				}
+			}
+
+			if readErr != nil {
+				resp := fmt.Sprintf("-%s\r\n", readErr)
+				_, _ = conn.Write([]byte(resp))
+				continue
+			}
+
+			if len(results) == 0 {
+				// no entries matched
+				_, _ = conn.Write([]byte("*-1\r\n"))
+				continue
+			}
+
+			// Encode RESP array of streams:
+			// *<num_matching_streams>\r\n
+			//   *2\r\n
+			//     $<len_key>\r\n<key>\r\n
+			//     *<num_entries>\r\n
+			//       *2\r\n
+			//         $<len_id>\r\n<id>\r\n
+			//         *<num_fields*2>\r\n
+			var resp strings.Builder
+			resp.WriteString(fmt.Sprintf("*%d\r\n", len(results)))
+
+			for _, res := range results {
+				resp.WriteString("*2\r\n")
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(res.key), res.key))
+
+				resp.WriteString(fmt.Sprintf("*%d\r\n", len(res.entries)))
+				for _, entry := range res.entries {
+					resp.WriteString("*2\r\n")
+					resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(entry.ID), entry.ID))
+
+					resp.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
+					for _, f := range entry.Fields {
+						resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Key), f.Key))
+						resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Value), f.Value))
+					}
+				}
+			}
+
+			_, _ = conn.Write([]byte(resp.String()))
+
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
 			_, _ = conn.Write([]byte(errMsg))

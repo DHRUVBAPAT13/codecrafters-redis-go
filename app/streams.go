@@ -213,3 +213,28 @@ func (s *Store) XRange(key, startBound, endBound string) ([]StreamEntry, error) 
 
 	return results, nil
 }
+
+func (s *Store) XRead(key, afterID string) ([]StreamEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stream, exists := s.streams[key]
+	if !exists || len(stream.Entries) == 0 {
+		return []StreamEntry{}, nil
+	}
+
+	targetMs, targetSeq, _, err := parseStreamID(afterID)
+	if err != nil {
+		return nil, errors.New("ERR invalid stream ID specified as stream command argument")
+	}
+
+	var results []StreamEntry
+	for _, entry := range stream.Entries {
+		// strict inequality: entry > targetID
+		if compareStreamIDs(entry.Ms, entry.Seq, targetMs, targetSeq) > 0 {
+			results = append(results, entry)
+		}
+	}
+
+	return results, nil
+}
