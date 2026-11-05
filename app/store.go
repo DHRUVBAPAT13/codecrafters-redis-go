@@ -65,3 +65,23 @@ func (s *Store) Get(key string) (string, bool) {
 
 	return item.value, true
 }
+
+func (s *Store) Type(key string) string {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// check string data
+	if item, ok := s.data[key]; ok {
+		if !item.isExpired() {
+			return "string"
+		}
+	}
+
+	// check list data
+	if list, ok := s.lists[key]; ok && len(list) > 0 {
+		return "list"
+	}
+
+	return "none"
+}

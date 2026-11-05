@@ -199,6 +199,16 @@ func handleClient(conn net.Conn, store *Store) {
 				_, _ = conn.Write([]byte(resp))
 			}
 
+		case "TYPE":
+			if len(args) < 2 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'type' command\r\n"))
+			}
+
+			key := args[1]
+			t := store.Type(key)
+			resp := fmt.Sprintf("+%s\r\n", t)
+			_, _ = conn.Write([]byte(resp))
+
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
 			_, _ = conn.Write([]byte(errMsg))
