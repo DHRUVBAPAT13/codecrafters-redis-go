@@ -459,6 +459,16 @@ func handleClient(conn net.Conn, store *Store) {
 			inTx = true
 			_, _ = conn.Write([]byte("+OK\r\n"))
 
+		case "EXEC":
+			if !inTx {
+				_, _ = conn.Write([]byte("-ERR EXEC without MULTI\r\n"))
+				continue
+			}
+
+			// Execution of queued commands will be handled in the next stage
+			inTx = false
+			_, _ = conn.Write([]byte("*0\r\n"))
+
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
 			_, _ = conn.Write([]byte(errMsg))
