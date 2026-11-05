@@ -279,11 +279,22 @@ func handleClient(conn net.Conn, store *Store) {
 			_, _ = conn.Write([]byte(resp.String()))
 
 		case "XREAD":
-			// find "STREAMS" keyword (case-sensitive)
+			var blockTimeout time.Duration
+			isBlock := false
+
+			// Look for BLOCK option
 			streamsIdx := -1
 			for i := 1; i < len(args); i++ {
-				if strings.ToUpper(args[i]) == "STREAMS" {
-					streamsIdx = 1
+				argUpper := strings.ToUpper(args[i])
+				if argUpper == "BLOCK" && i+1 < len(args) {
+					ms, err := strconv.ParseInt(args[i+1], 10, 64)
+					if err == nil {
+						isBlock = true
+						blockTimeout = time.Duration(ms) * time.Millisecond
+					}
+					i++
+				} else if argUpper == "STREAMS" {
+					streamsIdx = i
 					break
 				}
 			}
@@ -296,6 +307,7 @@ func handleClient(conn net.Conn, store *Store) {
 			streamArgs := args[streamsIdx+1:]
 			if len(streamArgs)%2 != 0 {
 				_, _ = conn.Write([]byte("-ERR syntax error, unmatched keys and IDs\r\n"))
+				continue
 			}
 
 			numStreams := len(streamArgs) / 2
@@ -307,43 +319,88 @@ func handleClient(conn net.Conn, store *Store) {
 				entries []StreamEntry
 			}
 
-			var results []streamResult
-			var readErr error
-
-			for i := 0; i < numStreams; i++ {
-				entries, err := store.XRead(keys[i], ids[i])
-				if err != nil {
-					readErr = err
-					break
+			fetchEntries := func() ([]streamResult, error) {
+				var res []streamResult
+				for i := 0; i < numStreams; i++ {
+					entries, err := store.XRead(keys[i], ids[i])
+					if err != nil {
+						return nil, err
+					}
+					if len(entries) > 0 {
+						res = append(res, streamResult{
+							key:     keys[i],
+							entries: entries,
+						})
+					}
 				}
-				if len(entries) > 0 {
-					results = append(results, streamResult{
-						key:     keys[i],
-						entries: entries,
-					})
-				}
+				return res, nil
 			}
 
-			if readErr != nil {
-				resp := fmt.Sprintf("-%s\r\n", readErr)
+			results, err := fetchEntries()
+			if err != nil {
+				resp := fmt.Sprintf("-%s\r\n", err.Error())
 				_, _ = conn.Write([]byte(resp))
 				continue
 			}
 
+			// If empty and BLOCK was requested, wait for notifications
+			if len(results) == 0 && isBlock {
+				waitChans := make([]chan struct{}, len(keys))
+				for i, k := range keys {
+					waitChans[i] = registerStreamWaiter(k)
+				}
+
+				done := make(chan struct{})
+				defer close(done) // Closes done when the wait finishes, killing all listener goroutines
+
+				// Aggregator channel that signals when any key gets an item
+				merged := make(chan struct{}, 1)
+				for _, ch := range waitChans {
+					go func(c chan struct{}) {
+						select {
+						case <-c:
+							select {
+							case merged <- struct{}{}:
+							default:
+							}
+						case <-done:
+							// exits cleanly if main times out or returns early
+							return
+						}
+					}(ch)
+				}
+
+				if blockTimeout == 0 {
+					// 0 means wait indefinitely
+					<-merged
+				} else {
+					select {
+					case <-merged:
+					case <-time.After(blockTimeout):
+					}
+				}
+
+				// Clean up registrations
+				for i, k := range keys {
+					removeStreamWaiter(k, waitChans[i])
+				}
+
+				// Try querying again after notification or timeout
+				results, err = fetchEntries()
+				if err != nil {
+					resp := fmt.Sprintf("-%s\r\n", err.Error())
+					_, _ = conn.Write([]byte(resp))
+					continue
+				}
+			}
+
 			if len(results) == 0 {
-				// no entries matched
+				// Nil array response on timeout or no match
 				_, _ = conn.Write([]byte("*-1\r\n"))
 				continue
 			}
 
-			// Encode RESP array of streams:
-			// *<num_matching_streams>\r\n
-			//   *2\r\n
-			//     $<len_key>\r\n<key>\r\n
-			//     *<num_entries>\r\n
-			//       *2\r\n
-			//         $<len_id>\r\n<id>\r\n
-			//         *<num_fields*2>\r\n
+			// Serialize RESP array of streams
 			var resp strings.Builder
 			resp.WriteString(fmt.Sprintf("*%d\r\n", len(results)))
 

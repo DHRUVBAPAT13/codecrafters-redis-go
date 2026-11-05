@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,8 +26,63 @@ type Stream struct {
 	Entries []StreamEntry
 }
 
+// track listeners waiting on new stream entries
+type StreamWaiter struct {
+	key string
+	ch  chan string
+}
+
+var (
+	streamWaitersMu sync.Mutex
+	streamWaiters   = make(map[string][]chan struct{})
+)
+
+func registerStreamWaiter(key string) chan struct{} {
+
+	streamWaitersMu.Lock()
+	defer streamWaitersMu.Unlock()
+
+	ch := make(chan struct{}, 1)
+	streamWaiters[key] = append(streamWaiters[key], ch)
+
+	return ch
+}
+
+func removeStreamWaiter(key string, ch chan struct{}) {
+
+	streamWaitersMu.Lock()
+	defer streamWaitersMu.Unlock()
+
+	waiters := streamWaiters[key]
+	for i, w := range waiters {
+		if w == ch {
+			streamWaiters[key] = append(waiters[:i], waiters[i+1:]...)
+			break
+		}
+	}
+
+	if len(streamWaiters[key]) == 0 {
+		delete(streamWaiters, key)
+	}
+}
+
+func notifyStreamWiater(key string) {
+
+	streamWaitersMu.Lock()
+	defer streamWaitersMu.Unlock()
+
+	for _, ch := range streamWaiters[key] {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	delete(streamWaiters, key)
+}
+
 // parseStreamID handles explicit IDs ("<ms>-<seq>") and partial auto-generation ("<ms>-*")
 func parseStreamID(id string) (ms int64, seq int64, isAutoSeq bool, err error) {
+
 	parts := strings.Split(id, "-")
 	if len(parts) != 2 {
 		return 0, 0, false, errors.New("invalid id format")
@@ -97,8 +153,8 @@ func compareStreamIDs(ms1, seq1, ms2, seq2 int64) int {
 
 // XAdd validates, auto-generates IDs if necessary, and appends an entry to the stream
 func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	stream, exists := s.streams[key]
 	if !exists {
@@ -179,6 +235,11 @@ func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
 		Seq:    seq,
 		Fields: fields,
 	})
+
+	s.mu.Unlock()
+
+	// notify any blocked XREAD clients
+	notifyStreamWiater(key)
 
 	return finalID, nil
 }
