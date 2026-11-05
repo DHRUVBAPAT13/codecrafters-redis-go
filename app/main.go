@@ -17,6 +17,7 @@ func handleClient(conn net.Conn, store *Store) {
 	reader := bufio.NewReader(conn)
 
 	inTx := false
+	var txQueue [][]string
 
 	for {
 		args, err := readRESPArray(reader)
@@ -33,6 +34,18 @@ func handleClient(conn net.Conn, store *Store) {
 		}
 
 		cmd := strings.ToUpper(args[0])
+
+		// 1. transaction interceptor
+		if inTx && cmd != "EXEC" && cmd != "DISCARD" {
+			if cmd == "MULTI" {
+				_, _ = conn.Write([]byte("-ERR MULTI calls cannot be nested\r\n"))
+				continue
+			}
+			// buffer command arguments without executing them
+			txQueue = append(txQueue, args)
+			_, _ = conn.Write([]byte("+QUEUED\r\n"))
+			continue
+		}
 
 		switch cmd {
 		case "PING":
@@ -457,6 +470,7 @@ func handleClient(conn net.Conn, store *Store) {
 				continue
 			}
 			inTx = true
+			txQueue = make([][]string, 0)
 			_, _ = conn.Write([]byte("+OK\r\n"))
 
 		case "EXEC":
@@ -467,7 +481,24 @@ func handleClient(conn net.Conn, store *Store) {
 
 			// Execution of queued commands will be handled in the next stage
 			inTx = false
-			_, _ = conn.Write([]byte("*0\r\n"))
+			if len(txQueue) == 0 {
+				_, _ = conn.Write([]byte("*0\r\n"))
+				txQueue = nil
+				continue
+			}
+			// empty return for now until execution state
+			_, _ = conn.Write([]byte("*0/r/n"))
+
+		case "DISCARD":
+
+			if !inTx {
+				_, _ = conn.Write([]byte("-ERR DISCARD without MULTI\r\n"))
+				continue
+			}
+
+			inTx = false
+			txQueue = nil
+			_, _ = conn.Write([]byte("+OK\r\n"))
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
