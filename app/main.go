@@ -455,6 +455,22 @@ func handleClient(conn net.Conn, store *Store) {
 		case "XREAD":
 			handleXREAD(conn, store, args)
 			continue
+
+		case "WATCH":
+			if inTx {
+				_, _ = conn.Write([]byte("-ERR WATCH inside MULTI is not allowed\r\n"))
+				continue
+			}
+
+			if len(args) < 2 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'watch' command\r\n"))
+				continue
+			}
+
+			// Watch state tracking will be added in upcoming stages
+			_, _ = conn.Write([]byte("+OK\r\n"))
+			continue
+
 		}
 
 		out := executeCommand(args, store)
