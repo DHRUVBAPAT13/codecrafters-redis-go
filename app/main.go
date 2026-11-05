@@ -30,12 +30,14 @@ type Store struct {
 	mu   sync.RWMutex
 	data map[string]Item
 	lists map[string][]string
+	blocked map[string][]chan string
 }
 
 func NewStore() *Store {
 	return &Store{
 		data: make(map[string]Item),
 		lists: make(map[string][]string),
+		blocked: make(map[string][]chan string),
 	}
 }
 
@@ -79,7 +81,25 @@ func (s *Store) RPush(key string, values ...string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.lists[key] = append(s.lists[key], values...)
+	
+	// if there are blocked clients waiting on this key, fulfill them in FIFO order first
+	for len(values) > 0 && len(s.blocked[key]) > 0 {
+		ch := s.blocked[key][0]
+		s.blocked[key] = s.blocked[key][1:] // remove the first channel from the slice
+		if len (s.blocked[key]) == 0 {
+			delete(s.blocked, key)
+		}
+
+		val := values[0]
+		values = values[1:] // remove the first value from the slice
+		ch <- val
+	}
+
+	// any remaining values go to the list
+	if len(values) > 0 {
+		s.lists[key] = append(s.lists[key], values...)
+	}
+
 	return len(s.lists[key])
 }
 
@@ -87,15 +107,29 @@ func (s *Store) LPush(key string, values ...string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// LPush inserts form left to right one by one,
-	// so the last argument ends up at the very front (index 0)
-	// Example: LPush key "a" "b" "c" -> ["c" "b" "a"]
-	reversed := make([]string, len(values))
-	for i, v := range values {
-		reversed[len(values)-1-i] = v
+	// if there are blocked clients, deliver the head elements first
+	for len(values) > 0 && len(s.blocked[key]) > 0 {
+		ch := s.blocked[key][0]
+		s.blocked[key] = s.blocked[key][1:] // remove the first channel from the slice
+		if len (s.blocked[key]) == 0 {
+			delete(s.blocked, key)
+		}
+
+		// in LPush, the last element of args ends at the very front
+		lastIdx := len(values) - 1
+		val := values[lastIdx]
+		values = values[:lastIdx]
+		ch <- val
 	}
 
-	s.lists[key] = append(reversed, s.lists[key]...)
+	if len(values) > 0 {
+		reversed := make([]string, len(values))
+		for i, v := range values {
+			reversed[len(values)-1-i] = v
+		}
+		// prepend the remaining values to the list
+		s.lists[key] = append(reversed, s.lists[key]...)
+	}
 
 	return len(s.lists[key])
 }
@@ -177,6 +211,31 @@ func (s *Store) LPop(key string, count int) ([]string, bool) {
 	}
 	return popped, true
 }
+
+func (s *Store) BLPop(key string) string {
+	s.mu.Lock()
+
+	// 1. if an element already exists, pop it immediately
+	if list, ok := s.lists[key]; ok && len(list) > 0 {
+		val := list[0]
+		s.lists[key] = list[1:]
+		if len(s.lists[key]) == 0 {
+			delete(s.lists, key)
+		}
+		s.mu.Unlock()
+		return val
+	}
+
+	// 2. otherwise, register this client channel in FIFO order
+	ch := make(chan string, 1)
+	s.blocked[key] = append(s.blocked[key], ch)
+	s.mu.Unlock()
+
+	// wait indefinitely until an element is delivered via LPush or RPush
+	val := <-ch
+	return val
+
+} 
 
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
 func readRESPArray(reader *bufio.Reader) ([]string, error) {
@@ -411,6 +470,22 @@ func handleClient(conn net.Conn, store *Store) {
 				}
 				_, _ = conn.Write([]byte(resp.String()))
 			}
+
+		case "BLPOP":
+			
+			if len(args) < 3 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'blpop' command\r\n"))
+				continue
+			}
+
+			key := args[1]
+			// args[2] is the timeout (0 for indefinite)
+
+			val := store.BLPop(key)
+
+			// Response is a 2-element RESP Array: [key, val]
+			resp := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(val), val)
+			_, _ = conn.Write([]byte(resp))
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
