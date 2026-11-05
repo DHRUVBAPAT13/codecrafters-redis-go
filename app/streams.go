@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -18,37 +19,34 @@ type Stream struct {
 }
 
 // parseStreamID splits and converts "<ms>-<seq>" into numerical values
-func parseStreamID(id string) (int64, int64, error) {
+func parseStreamID(id string) (ms int64, seq int64, isAutoSeq bool, err error) {
 
 	parts := strings.Split(id, "-")
 	if len(parts) != 2 {
-		return 0, 0, errors.New("invalid ID format")
+		return 0, 0, false, errors.New("invalid ID format")
 	}
 
-	ms, err1 := strconv.ParseInt(parts[0], 10, 64)
-	seq, err2 := strconv.ParseInt(parts[1], 10, 64)
-
-	if err1 != nil || err2 != nil {
-		return 0, 0, errors.New("invalid integer in ID")
+	ms, err = strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || ms < 0 {
+		return 0, 0, false, errors.New("invalid millisecond time")
 	}
 
-	return ms, seq, nil
+	if parts[1] == "*" {
+		return ms, 0, true, nil
+	}
+
+	seq, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || seq < 0 {
+		return 0, 0, false, errors.New("invalid sequence number")
+	}
+
+	return ms, seq, isAutoSeq, err
 }
 
 // XADD appends an entry to the stream and returns the entry ID
 func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	ms, seq, err := parseStreamID(id)
-	if err != nil {
-		return "", errors.New("ERR invalid stream ID specified as stream command argument")
-	}
-
-	// 1. minimum ID rule
-	if ms == 0 && seq == 0 {
-		return "", errors.New("ERR The ID specified in XADD must be greater than 0-0")
-	}
 
 	stream, exits := s.streams[key]
 	if !exits {
@@ -58,21 +56,56 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 		s.streams[key] = stream
 	}
 
-	// 2. incremental comparison against the top item
-	if len(stream.Entries) > 0 {
-		lastEntry := stream.Entries[len(stream.Entries)-1]
+	ms, seq, isAutoSeq, err := parseStreamID(id)
+	if err != nil {
+		return "", errors.New("ERR invalid stream ID specified as stream command argument")
+	}
+	if isAutoSeq {
+		if len(stream.Entries) > 0 {
+			lastEntry := stream.Entries[len(stream.Entries)-1]
+			if ms < lastEntry.Ms {
+				return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+			}
 
-		if ms < lastEntry.Ms || (ms == lastEntry.Ms && seq <= lastEntry.Seq) {
-			return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+			if ms == lastEntry.Ms {
+				seq = lastEntry.Seq
+			} else {
+				if ms == 0 {
+					seq = 1
+				} else {
+					seq = 0
+				}
+			}
+		} else {
+			if ms == 0 {
+				seq = 1
+			} else {
+				seq = 0
+			}
+		}
+	} else {
+		// 0-0 is invalid
+		if ms == 0 && seq == 0 {
+			return "", errors.New("ERR the specified ID in XADD most be greater than 0-0")
+		}
+
+		// must be strictly greater than the last entry
+		if len(stream.Entries) > 0 {
+			lastEntry := stream.Entries[len(stream.Entries)-1]
+			if ms < lastEntry.Ms || (ms == lastEntry.Ms && seq <= lastEntry.Seq) {
+				return "", errors.New("ERR the specified ID in XADD is equal or smaller than the target stream top item")
+			}
 		}
 	}
 
+	finalID := fmt.Sprintf("%d-%d", ms, seq)
+
 	stream.Entries = append(stream.Entries, StreamEntry{
-		ID:     id,
+		ID:     finalID,
 		Ms:     ms,
 		Seq:    seq,
 		Fields: fields,
 	})
 
-	return id, nil
+	return finalID, nil
 }
