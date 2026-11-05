@@ -298,3 +298,16 @@ func (s *Store) XRead(key, afterID string) ([]StreamEntry, error) {
 
 	return results, nil
 }
+
+// GetLastID returns the ID of the last entry in the stream, or "0-0" if empty
+func (s *Store) GetLastID(key string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stream, exists := s.streams[key]
+	if !exists || len(stream.Entries) == 0 {
+		return "0-0"
+	}
+
+	return stream.Entries[len(stream.Entries)-1].ID
+}

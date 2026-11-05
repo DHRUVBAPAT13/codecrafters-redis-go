@@ -314,6 +314,13 @@ func handleClient(conn net.Conn, store *Store) {
 			keys := streamArgs[:numStreams]
 			ids := streamArgs[numStreams:]
 
+			// Resolve "$" to the current top entry ID for each stream
+			for i := 0; i < numStreams; i++ {
+				if ids[i] == "$" {
+					ids[i] = store.GetLastID(keys[i])
+				}
+			}
+
 			type streamResult struct {
 				key     string
 				entries []StreamEntry
