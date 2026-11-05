@@ -14,8 +14,8 @@ import (
 )
 
 type Item struct {
-	value      string
-	expiresAt time.Time	// zero time means no expiration
+	value     string
+	expiresAt time.Time // zero time means no expiration
 }
 
 func (item Item) IsExpired() bool {
@@ -27,16 +27,16 @@ func (item Item) IsExpired() bool {
 
 // In-memory key-value store with read-write mutex for concurrency safety
 type Store struct {
-	mu   sync.RWMutex
-	data map[string]Item
-	lists map[string][]string
+	mu      sync.RWMutex
+	data    map[string]Item
+	lists   map[string][]string
 	blocked map[string][]chan string
 }
 
 func NewStore() *Store {
 	return &Store{
-		data: make(map[string]Item),
-		lists: make(map[string][]string),
+		data:    make(map[string]Item),
+		lists:   make(map[string][]string),
 		blocked: make(map[string][]chan string),
 	}
 }
@@ -51,7 +51,7 @@ func (s *Store) Set(key, value string, ttl time.Duration) {
 	}
 
 	s.data[key] = Item{
-		value:      value,
+		value:     value,
 		expiresAt: expiresAt,
 	}
 }
@@ -81,7 +81,6 @@ func (s *Store) RPush(key string, values ...string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	
 	// 1. append elements to the list
 	s.lists[key] = append(s.lists[key], values...)
 	newLen := len(s.lists[key])
@@ -197,7 +196,7 @@ func (s *Store) LPop(key string, count int) ([]string, bool) {
 	if !ok || len(list) == 0 {
 		return nil, false
 	}
-	
+
 	if count > len(list) {
 		count = len(list)
 	}
@@ -212,10 +211,13 @@ func (s *Store) LPop(key string, count int) ([]string, bool) {
 	return popped, true
 }
 
-func (s *Store) BLPop(key string) string {
+// BLPop attempts to pop an item, blocking up to timeout duration.
+// A timeout of 0 indicates indefinite wait.
+// Returns (value, true) if an item was acquired, or ("", false) on timeout.
+func (s *Store) BLPop(key string, timeout time.Duration) (string, bool) {
 	s.mu.Lock()
 
-	// If list already has elements, pop immediately
+	// 1. If an element already exists, pop immediately
 	if list, ok := s.lists[key]; ok && len(list) > 0 {
 		val := list[0]
 		s.lists[key] = list[1:]
@@ -223,18 +225,50 @@ func (s *Store) BLPop(key string) string {
 			delete(s.lists, key)
 		}
 		s.mu.Unlock()
-		return val
+		return val, true
 	}
 
-	// Register a channel in the waiting queue (FIFO)
+	// 2. register a channel in the waiting queue (FIFO)
 	ch := make(chan string, 1)
 	s.blocked[key] = append(s.blocked[key], ch)
 	s.mu.Unlock()
 
-	// Block until RPush/LPush sends an item
-	return <-ch
+	// 3. wait indefinitely if timeout is 0
+	if timeout == 0 {
+		val := <-ch
+		return val, true
+	}
 
-} 
+	// 4. wait with timeout
+	select {
+	case val := <-ch:
+		return val, true
+
+	case <-time.After(timeout):
+		// clean up channel from s.blocked on timeout
+		s.mu.Unlock()
+		waiters := s.blocked[key]
+		for i, waiter := range waiters {
+			if waiter == ch {
+				s.blocked[key] = append(waiters[:i], waiters[i+1:1]...)
+				break
+			}
+		}
+		if len(s.blocked[key]) == 0 {
+			delete(s.blocked, key)
+		}
+		s.mu.Unlock()
+
+		// check if an item was just sent as the timeout triggered
+		select {
+		case val := <-ch:
+			return val, true
+
+		default:
+			return "", false
+		}
+	}
+}
 
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
 func readRESPArray(reader *bufio.Reader) ([]string, error) {
@@ -336,7 +370,7 @@ func handleClient(conn net.Conn, store *Store) {
 			for i := 3; i < len(args); i++ {
 
 				opt := strings.ToUpper(args[i])
-				
+
 				if opt == "PX" && i+1 < len(args) {
 					ms, err := strconv.ParseInt(args[i+1], 10, 64)
 					if err == nil {
@@ -415,7 +449,7 @@ func handleClient(conn net.Conn, store *Store) {
 
 			var resp strings.Builder
 			resp.WriteString(fmt.Sprintf("*%d\r\n", len(items)))
-			
+
 			for _, item := range items {
 				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(item), item))
 			}
@@ -478,13 +512,26 @@ func handleClient(conn net.Conn, store *Store) {
 			}
 
 			key := args[1]
-			// args[2] is the timeout (0 for indefinite)
+			timeoutSec, err := strconv.ParseFloat(args[2], 64)
+			if err != nil || timeoutSec < 0 {
+				_, _ = conn.Write([]byte("-ERR timeout is not a float or out of range"))
+				continue
+			}
 
-			val := store.BLPop(key)
+			var timeout time.Duration
+			if timeoutSec > 0 {
+				timeout = time.Duration(timeoutSec * float64(time.Second))
+			}
 
-			// Response is a 2-element RESP Array: [key, val]
-			resp := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(val), val)
-			_, _ = conn.Write([]byte(resp))
+			val, ok := store.BLPop(key, timeout)
+			if !ok {
+				// null array on timeout: *-1\r\n
+				_, _ = conn.Write([]byte("*-1\r\n"))
+			} else {
+				// RESP array: [key, val]
+				resp := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(val), val)
+				_, _ = conn.Write([]byte(resp))
+			}
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
