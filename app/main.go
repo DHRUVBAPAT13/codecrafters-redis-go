@@ -155,6 +155,24 @@ func (s *Store) LLen(key string) int {
 	return len(list)
 }
 
+func (s *Store) LPop(key string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	list, ok := s.lists[key]
+	if !ok || len(list) == 0 {
+		return "", false
+	}
+	value := list[0]
+	s.lists[key] = list[1:]
+
+	// clean up key if empty
+	if len(s.lists[key]) == 0 {
+		delete(s.lists, key)
+	}
+	return value, true
+}
+
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
 func readRESPArray(reader *bufio.Reader) ([]string, error) {
 	line, err := reader.ReadString('\n')
@@ -349,6 +367,21 @@ func handleClient(conn net.Conn, store *Store) {
 			length := store.LLen(key)
 			resp := fmt.Sprintf(":%d\r\n", length)
 			_, _ = conn.Write([]byte(resp))
+
+		case "LPOP":
+			if len(args) < 2 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'lpop' command\r\n"))
+				continue
+			}
+			key := args[1]
+			val, ok := store.LPop(key)
+			if !ok {
+				// Null Bulk String for missing keys or empty list
+				_, _ = conn.Write([]byte("$-1\r\n"))
+			} else {
+				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
+				_, _ = conn.Write([]byte(resp))
+			}
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
