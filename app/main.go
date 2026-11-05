@@ -155,22 +155,27 @@ func (s *Store) LLen(key string) int {
 	return len(list)
 }
 
-func (s *Store) LPop(key string) (string, bool) {
+func (s *Store) LPop(key string, count int) ([]string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	list, ok := s.lists[key]
 	if !ok || len(list) == 0 {
-		return "", false
+		return nil, false
 	}
-	value := list[0]
-	s.lists[key] = list[1:]
+	
+	if count > len(list) {
+		count = len(list)
+	}
 
-	// clean up key if empty
+	popped := make([]string, count)
+	copy(popped, list[:count])
+
+	s.lists[key] = list[count:]
 	if len(s.lists[key]) == 0 {
 		delete(s.lists, key)
 	}
-	return value, true
+	return popped, true
 }
 
 // readRESPArray parses an incoming Redis command formatted as a RESP Array (*<count>\r\n...)
@@ -374,13 +379,37 @@ func handleClient(conn net.Conn, store *Store) {
 				continue
 			}
 			key := args[1]
-			val, ok := store.LPop(key)
+			hasCount := len(args) >= 3
+
+			count := 1
+			if hasCount {
+				parsedCount, err := strconv.Atoi(args[2])
+				if err != nil || parsedCount <= 0 {
+					_, _ = conn.Write([]byte("-ERR value is not a positive integer\r\n"))
+					continue
+				}
+				count = parsedCount
+			}
+
+			popped, ok := store.LPop(key, count)
 			if !ok {
-				// Null Bulk String for missing keys or empty list
+				// null bulk string for empty list
 				_, _ = conn.Write([]byte("$-1\r\n"))
-			} else {
+			}
+
+			if !hasCount {
+				// single element format: bulk string
+				val := popped[0]
 				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
 				_, _ = conn.Write([]byte(resp))
+			} else {
+				// multi-elements format: RESP Array
+				var resp strings.Builder
+				resp.WriteString(fmt.Sprintf("*%d\r\n", len(popped)))
+				for _, item := range popped {
+					resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(item), item))
+				}
+				_, _ = conn.Write([]byte(resp.String()))
 			}
 
 		default:
