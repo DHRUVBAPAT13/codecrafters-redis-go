@@ -430,6 +430,24 @@ func handleClient(conn net.Conn, store *Store) {
 
 			_, _ = conn.Write([]byte(resp.String()))
 
+		case "INCR":
+
+			if len(args) < 2 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'incr' command"))
+				continue
+			}
+
+			key := args[1]
+			newVal, err := store.Incr(key)
+			if err != nil {
+				resp := fmt.Sprintf("-%s\r\n", err.Error())
+				_, _ = conn.Write([]byte(resp))
+				continue
+			}
+
+			resp := fmt.Sprintf(":%d\r\n", newVal)
+			_, _ = conn.Write([]byte(resp))
+
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
 			_, _ = conn.Write([]byte(errMsg))
