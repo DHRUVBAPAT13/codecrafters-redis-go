@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type StreamEntry struct {
@@ -18,6 +19,7 @@ type Stream struct {
 	Entries []StreamEntry
 }
 
+// parseStreamID handles explicit IDs ("<ms>-<seq>") and partial auto-generation ("<ms>-*")
 func parseStreamID(id string) (ms int64, seq int64, isAutoSeq bool, err error) {
 
 	parts := strings.Split(id, "-")
@@ -42,6 +44,7 @@ func parseStreamID(id string) (ms int64, seq int64, isAutoSeq bool, err error) {
 	return ms, seq, false, nil
 }
 
+// XAdd validates, auto-generates IDs if necessary, and appends an entry to the stream
 func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 
 	s.mu.Lock()
@@ -55,19 +58,56 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 		s.streams[key] = stream
 	}
 
-	ms, seq, isAutoSeq, err := parseStreamID(id)
-	if err != nil {
-		return "", errors.New("ERR invalid stream ID specified as stream command argument")
-	}
+	var ms, seq int64
 
-	if isAutoSeq {
+	if id == "*" {
+
+		// Case 1: Full auto-generation (*)
+		nowMs := time.Now().UnixMilli()
 		if len(stream.Entries) > 0 {
 			lastEntry := stream.Entries[len(stream.Entries)-1]
-			if ms < lastEntry.Ms {
-				return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-			}
-			if ms == lastEntry.Ms {
+
+			if nowMs == lastEntry.Ms {
+				ms = lastEntry.Ms
 				seq = lastEntry.Seq + 1
+			} else if nowMs < lastEntry.Ms {
+				// Prevent wall-clock backwards jump from breaking monotonicity
+				ms = lastEntry.Ms
+				seq = lastEntry.Seq + 1
+			} else {
+				ms = nowMs
+				seq = 0
+			}
+		} else {
+			ms = nowMs
+			seq = 0
+		}
+	} else {
+		// Case 2 & 3: Partial auto-generation (<ms>-*) or Explicit ID (<ms>-<seq>)
+		parsedMs, parsedSeq, isAutoSeq, err := parseStreamID(id)
+
+		if err != nil {
+			return "", errors.New("ERR invalid stream ID specified as stream command argument")
+		}
+
+		ms = parsedMs
+
+		if isAutoSeq {
+			if len(stream.Entries) > 0 {
+				lastEntry := stream.Entries[len(stream.Entries)-1]
+
+				if ms < lastEntry.Ms {
+					return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+				}
+				if ms == lastEntry.Ms {
+					seq = lastEntry.Seq + 1
+				} else {
+					if ms == 0 {
+						seq = 1
+					} else {
+						seq = 0
+					}
+				}
 			} else {
 				if ms == 0 {
 					seq = 1
@@ -76,21 +116,19 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 				}
 			}
 		} else {
-			if ms == 0 {
-				seq = 1
-			} else {
-				seq = 0
-			}
-		}
-	} else {
-		if ms == 0 && seq == 0 {
-			return "", errors.New("ERR The ID specified in XADD must be greater than 0-0")
-		}
+			seq = parsedSeq
 
-		if len(stream.Entries) > 0 {
-			lastEntry := stream.Entries[len(stream.Entries)-1]
-			if ms < lastEntry.Ms || (ms == lastEntry.Ms && seq <= lastEntry.Seq) {
-				return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+			// 0-0 is explicitly invalid
+			if ms == 0 && seq == 0 {
+				return "", errors.New("ERR The ID specified in XADD must be greater than 0-0")
+			}
+
+			// Strictly greater check
+			if len(stream.Entries) > 0 {
+				lastEntry := stream.Entries[len(stream.Entries)-1]
+				if ms < lastEntry.Ms || (ms == lastEntry.Ms && seq <= lastEntry.Seq) {
+					return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+				}
 			}
 		}
 	}
