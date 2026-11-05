@@ -19,6 +19,7 @@ func (s *Store) XAdd(key, id string, fields map[string]string) string {
 		stream = &Stream{
 			Entries: make([]StreamEntry, 0),
 		}
+		s.streams[key] = stream
 	}
 
 	stream.Entries = append(stream.Entries, StreamEntry{
