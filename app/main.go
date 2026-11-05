@@ -12,6 +12,362 @@ import (
 	"time"
 )
 
+func executeCommand(args []string, store *Store) []byte {
+	if len(args) == 0 {
+		return nil
+	}
+
+	cmd := strings.ToUpper(args[0])
+
+	switch cmd {
+	case "PING":
+		return []byte("+PONG\r\n")
+
+	case "ECHO":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'echo' command\r\n")
+		}
+		msg := args[1]
+		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(msg), msg)
+
+	case "SET":
+		if len(args) < 3 {
+			return []byte("-ERR wrong number of arguments for 'set' command\r\n")
+		}
+		key := args[1]
+		val := args[2]
+
+		var expiry time.Duration
+		for i := 3; i < len(args); i++ {
+			if strings.ToUpper(args[i]) == "PX" && i+1 < len(args) {
+				ms, err := strconv.ParseInt(args[i+1], 10, 64)
+				if err == nil {
+					expiry = time.Duration(ms) * time.Millisecond
+				}
+				i++
+			}
+		}
+
+		store.Set(key, val, expiry)
+		return []byte("+OK\r\n")
+
+	case "GET":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'get' command\r\n")
+		}
+		key := args[1]
+		val, ok := store.Get(key)
+		if !ok {
+			return []byte("$-1\r\n")
+		}
+		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(val), val)
+
+	case "TYPE":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'type' command\r\n")
+		}
+		return fmt.Appendf(nil, "+%s\r\n", store.Type(args[1]))
+
+	case "INCR":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'incr' command\r\n")
+		}
+		key := args[1]
+		newVal, err := store.Incr(key)
+		if err != nil {
+			return fmt.Appendf(nil, "-%s\r\n", err.Error())
+		}
+		return fmt.Appendf(nil, ":%d\r\n", newVal)
+
+	case "RPUSH":
+		if len(args) < 3 {
+			return []byte("-ERR wrong number of arguments for 'rpush' command\r\n")
+		}
+		key := args[1]
+		length := store.RPush(key, args[2:]...)
+		return fmt.Appendf(nil, ":%d\r\n", length)
+
+	case "LPUSH":
+		if len(args) < 3 {
+			return []byte("-ERR wrong number of arguments for 'lpush' command\r\n")
+		}
+		key := args[1]
+		length := store.LPush(key, args[2:]...)
+		return fmt.Appendf(nil, ":%d\r\n", length)
+
+	case "LPOP":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'lpop' command\r\n")
+		}
+		key := args[1]
+		count := 1
+		if len(args) > 2 {
+			c, err := strconv.Atoi(args[2])
+			if err != nil || c < 0 {
+				return []byte("-ERR value is not an integer or out of range\r\n")
+			}
+			count = c
+		}
+
+		vals, ok := store.LPop(key, count)
+		if !ok || len(vals) == 0 {
+			return []byte("$-1\r\n")
+		}
+
+		if len(args) == 2 {
+			return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(vals[0]), vals[0])
+		}
+
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("*%d\r\n", len(vals)))
+		for _, v := range vals {
+			b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(v), v))
+		}
+		return []byte(b.String())
+
+	case "LLEN":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'llen' command\r\n")
+		}
+		key := args[1]
+		return fmt.Appendf(nil, ":%d\r\n", store.LLen(key))
+
+	case "LRANGE":
+		if len(args) < 4 {
+			return []byte("-ERR wrong number of arguments for 'lrange' command\r\n")
+		}
+		key := args[1]
+		start, _ := strconv.Atoi(args[2])
+		stop, _ := strconv.Atoi(args[3])
+		items := store.LRange(key, start, stop)
+
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("*%d\r\n", len(items)))
+		for _, item := range items {
+			b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(item), item))
+		}
+		return []byte(b.String())
+
+	case "XADD":
+		if len(args) < 4 || (len(args)-3)%2 != 0 {
+			return []byte("-ERR wrong number of arguments for 'xadd' command\r\n")
+		}
+		key := args[1]
+		id := args[2]
+
+		fields := make([]StreamField, 0, (len(args)-3)/2)
+		for i := 3; i < len(args); i += 2 {
+			fields = append(fields, StreamField{
+				Key:   args[i],
+				Value: args[i+1],
+			})
+		}
+
+		entryID, err := store.XAdd(key, id, fields)
+		if err != nil {
+			return fmt.Appendf(nil, "-%s\r\n", err.Error())
+		}
+		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(entryID), entryID)
+
+	case "XRANGE":
+		if len(args) < 4 {
+			return []byte("-ERR wrong number of arguments for 'xrange' command\r\n")
+		}
+		key := args[1]
+		startBound := args[2]
+		endBound := args[3]
+
+		entries, err := store.XRange(key, startBound, endBound)
+		if err != nil {
+			return fmt.Appendf(nil, "-%s\r\n", err.Error())
+		}
+
+		var resp strings.Builder
+		resp.WriteString(fmt.Sprintf("*%d\r\n", len(entries)))
+		for _, entry := range entries {
+			resp.WriteString("*2\r\n")
+			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(entry.ID), entry.ID))
+			resp.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
+			for _, f := range entry.Fields {
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Key), f.Key))
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Value), f.Value))
+			}
+		}
+		return []byte(resp.String())
+
+	default:
+		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
+	}
+}
+
+func handleBLPOP(conn net.Conn, store *Store, args []string) {
+	if len(args) < 3 {
+		_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'blpop' command\r\n"))
+		return
+	}
+
+	key := args[1]
+	timeoutSec, err := strconv.ParseFloat(args[2], 64)
+	if err != nil || timeoutSec < 0 {
+		_, _ = conn.Write([]byte("-ERR timeout is not a float or out of range\r\n"))
+		return
+	}
+
+	timeout := time.Duration(timeoutSec * float64(time.Second))
+	val, ok := store.BLPop(key, timeout)
+	if !ok {
+		_, _ = conn.Write([]byte("*-1\r\n"))
+		return
+	}
+
+	resp := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(val), val)
+	_, _ = conn.Write([]byte(resp))
+}
+
+func handleXREAD(conn net.Conn, store *Store, args []string) {
+	var blockTimeout time.Duration
+	isBlock := false
+
+	streamsIdx := -1
+	for i := 1; i < len(args); i++ {
+		argUpper := strings.ToUpper(args[i])
+		if argUpper == "BLOCK" && i+1 < len(args) {
+			ms, err := strconv.ParseInt(args[i+1], 10, 64)
+			if err == nil {
+				isBlock = true
+				blockTimeout = time.Duration(ms) * time.Millisecond
+			}
+			i++
+		} else if argUpper == "STREAMS" {
+			streamsIdx = i
+			break
+		}
+	}
+
+	if streamsIdx == -1 || streamsIdx == len(args)-1 {
+		_, _ = conn.Write([]byte("-ERR syntax error\r\n"))
+		return
+	}
+
+	streamArgs := args[streamsIdx+1:]
+	if len(streamArgs)%2 != 0 {
+		_, _ = conn.Write([]byte("-ERR syntax error, unmatched keys and IDs\r\n"))
+		return
+	}
+
+	numStreams := len(streamArgs) / 2
+	keys := streamArgs[:numStreams]
+	ids := streamArgs[numStreams:]
+
+	for i := 0; i < numStreams; i++ {
+		if ids[i] == "$" {
+			ids[i] = store.GetLastID(keys[i])
+		}
+	}
+
+	type streamResult struct {
+		key     string
+		entries []StreamEntry
+	}
+
+	fetchEntries := func() ([]streamResult, error) {
+		var res []streamResult
+		for i := 0; i < numStreams; i++ {
+			entries, err := store.XRead(keys[i], ids[i])
+			if err != nil {
+				return nil, err
+			}
+			if len(entries) > 0 {
+				res = append(res, streamResult{
+					key:     keys[i],
+					entries: entries,
+				})
+			}
+		}
+		return res, nil
+	}
+
+	results, err := fetchEntries()
+	if err != nil {
+		resp := fmt.Sprintf("-%s\r\n", err.Error())
+		_, _ = conn.Write([]byte(resp))
+		return
+	}
+
+	if len(results) == 0 && isBlock {
+		waitChans := make([]chan struct{}, len(keys))
+		for i, k := range keys {
+			waitChans[i] = registerStreamWaiter(k)
+		}
+
+		merged := make(chan struct{}, 1)
+		done := make(chan struct{})
+
+		for _, ch := range waitChans {
+			go func(c chan struct{}) {
+				select {
+				case <-c:
+					select {
+					case merged <- struct{}{}:
+					default:
+					}
+				case <-done:
+					return
+				}
+			}(ch)
+		}
+
+		if blockTimeout == 0 {
+			<-merged
+		} else {
+			select {
+			case <-merged:
+			case <-time.After(blockTimeout):
+			}
+		}
+
+		close(done)
+
+		for i, k := range keys {
+			removeStreamWaiter(k, waitChans[i])
+		}
+
+		results, err = fetchEntries()
+		if err != nil {
+			resp := fmt.Sprintf("-%s\r\n", err.Error())
+			_, _ = conn.Write([]byte(resp))
+			return
+		}
+	}
+
+	if len(results) == 0 {
+		_, _ = conn.Write([]byte("*-1\r\n"))
+		return
+	}
+
+	var resp strings.Builder
+	resp.WriteString(fmt.Sprintf("*%d\r\n", len(results)))
+
+	for _, res := range results {
+		resp.WriteString("*2\r\n")
+		resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(res.key), res.key))
+
+		resp.WriteString(fmt.Sprintf("*%d\r\n", len(res.entries)))
+		for _, entry := range res.entries {
+			resp.WriteString("*2\r\n")
+			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(entry.ID), entry.ID))
+
+			resp.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
+			for _, f := range entry.Fields {
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Key), f.Key))
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Value), f.Value))
+			}
+		}
+	}
+
+	_, _ = conn.Write([]byte(resp.String()))
+}
+
 func handleClient(conn net.Conn, store *Store) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
@@ -35,443 +391,26 @@ func handleClient(conn net.Conn, store *Store) {
 
 		cmd := strings.ToUpper(args[0])
 
-		// 1. transaction interceptor
 		if inTx && cmd != "EXEC" && cmd != "DISCARD" {
 			if cmd == "MULTI" {
-				_, _ = conn.Write([]byte("-ERR MULTI calls cannot be nested\r\n"))
+				_, _ = conn.Write([]byte("-ERR MULTI calls can not be nested\r\n"))
 				continue
 			}
-			// buffer command arguments without executing them
 			txQueue = append(txQueue, args)
 			_, _ = conn.Write([]byte("+QUEUED\r\n"))
 			continue
 		}
 
 		switch cmd {
-		case "PING":
-			_, _ = conn.Write([]byte("+PONG\r\n"))
-
-		case "ECHO":
-			if len(args) < 2 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'echo' command\r\n"))
-				continue
-			}
-			arg := args[1]
-			resp := fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg)
-			_, _ = conn.Write([]byte(resp))
-
-		case "SET":
-			if len(args) < 3 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'set' command\r\n"))
-				continue
-			}
-			key := args[1]
-			val := args[2]
-			var ttl time.Duration
-
-			for i := 3; i < len(args); i++ {
-				opt := strings.ToUpper(args[i])
-				if opt == "PX" && i+1 < len(args) {
-					ms, err := strconv.ParseInt(args[i+1], 10, 64)
-					if err == nil {
-						ttl = time.Duration(ms) * time.Millisecond
-					}
-					i++
-				} else if opt == "EX" && i+1 < len(args) {
-					sec, err := strconv.ParseInt(args[i+1], 10, 64)
-					if err == nil {
-						ttl = time.Duration(sec) * time.Second
-					}
-					i++
-				}
-			}
-
-			store.Set(key, val, ttl)
-			_, _ = conn.Write([]byte("+OK\r\n"))
-
-		case "GET":
-			if len(args) < 2 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'get' command\r\n"))
-				continue
-			}
-			key := args[1]
-			val, ok := store.Get(key)
-			if !ok {
-				_, _ = conn.Write([]byte("$-1\r\n"))
-			} else {
-				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
-				_, _ = conn.Write([]byte(resp))
-			}
-
-		case "RPUSH":
-			if len(args) < 3 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'rpush' command\r\n"))
-				continue
-			}
-			key := args[1]
-			newLen := store.RPush(key, args[2:]...)
-			resp := fmt.Sprintf(":%d\r\n", newLen)
-			_, _ = conn.Write([]byte(resp))
-
-		case "LPUSH":
-			if len(args) < 3 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'lpush' command\r\n"))
-				continue
-			}
-			key := args[1]
-			newLen := store.LPush(key, args[2:]...)
-			resp := fmt.Sprintf(":%d\r\n", newLen)
-			_, _ = conn.Write([]byte(resp))
-
-		case "LRANGE":
-			if len(args) < 4 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'lrange' command\r\n"))
-				continue
-			}
-			key := args[1]
-			start, err1 := strconv.Atoi(args[2])
-			stop, err2 := strconv.Atoi(args[3])
-			if err1 != nil || err2 != nil {
-				_, _ = conn.Write([]byte("-ERR value is not an integer or out of range\r\n"))
-				continue
-			}
-
-			items := store.LRange(key, start, stop)
-			var resp strings.Builder
-			resp.WriteString(fmt.Sprintf("*%d\r\n", len(items)))
-			for _, item := range items {
-				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(item), item))
-			}
-			_, _ = conn.Write([]byte(resp.String()))
-
-		case "LLEN":
-			if len(args) < 2 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'llen' command\r\n"))
-				continue
-			}
-			key := args[1]
-			resp := fmt.Sprintf(":%d\r\n", store.LLen(key))
-			_, _ = conn.Write([]byte(resp))
-
-		case "LPOP":
-			if len(args) < 2 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'lpop' command\r\n"))
-				continue
-			}
-			key := args[1]
-			hasCount := len(args) >= 3
-			count := 1
-			if hasCount {
-				parsedCount, err := strconv.Atoi(args[2])
-				if err != nil || parsedCount < 0 {
-					_, _ = conn.Write([]byte("-ERR value is not an integer or out of range\r\n"))
-					continue
-				}
-				count = parsedCount
-			}
-
-			popped, ok := store.LPop(key, count)
-			if !ok {
-				_, _ = conn.Write([]byte("$-1\r\n"))
-				continue
-			}
-
-			if !hasCount {
-				val := popped[0]
-				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
-				_, _ = conn.Write([]byte(resp))
-			} else {
-				var resp strings.Builder
-				resp.WriteString(fmt.Sprintf("*%d\r\n", len(popped)))
-				for _, val := range popped {
-					resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
-				}
-				_, _ = conn.Write([]byte(resp.String()))
-			}
-
-		case "BLPOP":
-			if len(args) < 3 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'blpop' command\r\n"))
-				continue
-			}
-			key := args[1]
-			timeoutSec, err := strconv.ParseFloat(args[2], 64)
-			if err != nil || timeoutSec < 0 {
-				_, _ = conn.Write([]byte("-ERR timeout is not a float or out of range\r\n"))
-				continue
-			}
-
-			var timeout time.Duration
-			if timeoutSec > 0 {
-				timeout = time.Duration(timeoutSec * float64(time.Second))
-			}
-
-			val, ok := store.BLPop(key, timeout)
-			if !ok {
-				_, _ = conn.Write([]byte("*-1\r\n"))
-			} else {
-				resp := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(val), val)
-				_, _ = conn.Write([]byte(resp))
-			}
-
-		case "TYPE":
-			if len(args) < 2 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'type' command\r\n"))
-			}
-
-			key := args[1]
-			t := store.Type(key)
-			resp := fmt.Sprintf("+%s\r\n", t)
-			_, _ = conn.Write([]byte(resp))
-
-		case "XADD":
-
-			// Expected format: XADD key id field1 value1 [field2 value2 ...]
-			// Minimum args: 4 (e.g. XADD stream 0-1 foo bar)
-			if len(args) < 4 || (len(args)-3)%2 != 0 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'xadd' command\r\n"))
-				continue
-			}
-
-			key := args[1]
-			id := args[2]
-
-			fields := make([]StreamField, 0, (len(args)-3)/2)
-			for i := 3; i < len(args); i += 2 {
-				fields = append(fields, StreamField{
-					Key:   args[i],
-					Value: args[i+1],
-				})
-			}
-
-			entryID, err := store.XAdd(key, id, fields)
-
-			if err != nil {
-				resp := fmt.Sprintf("-%s\r\n", err.Error())
-				_, _ = conn.Write([]byte(resp))
-				continue
-			}
-
-			// Response is the entry ID encoded as a bulk string
-			resp := fmt.Sprintf("$%d\r\n%s\r\n", len(entryID), entryID)
-			_, _ = conn.Write([]byte(resp))
-
-		case "XRANGE":
-			if len(args) < 4 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'xrange' command\r\n"))
-				continue
-			}
-
-			key := args[1]
-			startBound := args[2]
-			endBound := args[3]
-
-			entries, err := store.XRange(key, startBound, endBound)
-			if err != nil {
-				resp := fmt.Sprintf("-%s\r\n", err.Error())
-				_, _ = conn.Write([]byte(resp))
-				continue
-			}
-
-			var resp strings.Builder
-			resp.WriteString(fmt.Sprintf("*%d\r\n", len(entries)))
-
-			for _, entry := range entries {
-
-				// each entry is a 2-element array: [ID, [k1, v1, k2, v2, ....]]
-				resp.WriteString("*2\r\n")
-				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(entry.ID), entry.ID))
-
-				// field array length is len(fields)*2
-				resp.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
-
-				for _, f := range entry.Fields {
-					resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Key), f.Key))
-					resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Value), f.Value))
-				}
-			}
-
-			_, _ = conn.Write([]byte(resp.String()))
-
-		case "XREAD":
-			var blockTimeout time.Duration
-			isBlock := false
-
-			// Look for BLOCK option
-			streamsIdx := -1
-			for i := 1; i < len(args); i++ {
-				argUpper := strings.ToUpper(args[i])
-				if argUpper == "BLOCK" && i+1 < len(args) {
-					ms, err := strconv.ParseInt(args[i+1], 10, 64)
-					if err == nil {
-						isBlock = true
-						blockTimeout = time.Duration(ms) * time.Millisecond
-					}
-					i++
-				} else if argUpper == "STREAMS" {
-					streamsIdx = i
-					break
-				}
-			}
-
-			if streamsIdx == -1 || streamsIdx == len(args)-1 {
-				_, _ = conn.Write([]byte("-ERR syntax error\r\n"))
-				continue
-			}
-
-			streamArgs := args[streamsIdx+1:]
-			if len(streamArgs)%2 != 0 {
-				_, _ = conn.Write([]byte("-ERR syntax error, unmatched keys and IDs\r\n"))
-				continue
-			}
-
-			numStreams := len(streamArgs) / 2
-			keys := streamArgs[:numStreams]
-			ids := streamArgs[numStreams:]
-
-			// Resolve "$" to the current top entry ID for each stream
-			for i := 0; i < numStreams; i++ {
-				if ids[i] == "$" {
-					ids[i] = store.GetLastID(keys[i])
-				}
-			}
-
-			type streamResult struct {
-				key     string
-				entries []StreamEntry
-			}
-
-			fetchEntries := func() ([]streamResult, error) {
-				var res []streamResult
-				for i := 0; i < numStreams; i++ {
-					entries, err := store.XRead(keys[i], ids[i])
-					if err != nil {
-						return nil, err
-					}
-					if len(entries) > 0 {
-						res = append(res, streamResult{
-							key:     keys[i],
-							entries: entries,
-						})
-					}
-				}
-				return res, nil
-			}
-
-			results, err := fetchEntries()
-			if err != nil {
-				resp := fmt.Sprintf("-%s\r\n", err.Error())
-				_, _ = conn.Write([]byte(resp))
-				continue
-			}
-
-			// If empty and BLOCK was requested, wait for notifications
-			if len(results) == 0 && isBlock {
-				waitChans := make([]chan struct{}, len(keys))
-				for i, k := range keys {
-					waitChans[i] = registerStreamWaiter(k)
-				}
-
-				done := make(chan struct{})
-				defer close(done) // Closes done when the wait finishes, killing all listener goroutines
-
-				// Aggregator channel that signals when any key gets an item
-				merged := make(chan struct{}, 1)
-				for _, ch := range waitChans {
-					go func(c chan struct{}) {
-						select {
-						case <-c:
-							select {
-							case merged <- struct{}{}:
-							default:
-							}
-						case <-done:
-							// exits cleanly if main times out or returns early
-							return
-						}
-					}(ch)
-				}
-
-				if blockTimeout == 0 {
-					// 0 means wait indefinitely
-					<-merged
-				} else {
-					select {
-					case <-merged:
-					case <-time.After(blockTimeout):
-					}
-				}
-
-				// Clean up registrations
-				for i, k := range keys {
-					removeStreamWaiter(k, waitChans[i])
-				}
-
-				// Try querying again after notification or timeout
-				results, err = fetchEntries()
-				if err != nil {
-					resp := fmt.Sprintf("-%s\r\n", err.Error())
-					_, _ = conn.Write([]byte(resp))
-					continue
-				}
-			}
-
-			if len(results) == 0 {
-				// Nil array response on timeout or no match
-				_, _ = conn.Write([]byte("*-1\r\n"))
-				continue
-			}
-
-			// Serialize RESP array of streams
-			var resp strings.Builder
-			resp.WriteString(fmt.Sprintf("*%d\r\n", len(results)))
-
-			for _, res := range results {
-				resp.WriteString("*2\r\n")
-				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(res.key), res.key))
-
-				resp.WriteString(fmt.Sprintf("*%d\r\n", len(res.entries)))
-				for _, entry := range res.entries {
-					resp.WriteString("*2\r\n")
-					resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(entry.ID), entry.ID))
-
-					resp.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
-					for _, f := range entry.Fields {
-						resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Key), f.Key))
-						resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Value), f.Value))
-					}
-				}
-			}
-
-			_, _ = conn.Write([]byte(resp.String()))
-
-		case "INCR":
-
-			if len(args) < 2 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'incr' command"))
-				continue
-			}
-
-			key := args[1]
-			newVal, err := store.Incr(key)
-			if err != nil {
-				resp := fmt.Sprintf("-%s\r\n", err.Error())
-				_, _ = conn.Write([]byte(resp))
-				continue
-			}
-
-			resp := fmt.Sprintf(":%d\r\n", newVal)
-			_, _ = conn.Write([]byte(resp))
-
 		case "MULTI":
-
 			if inTx {
-				_, _ = conn.Write([]byte("-ERR Multi calls cannot be nested"))
+				_, _ = conn.Write([]byte("-ERR MULTI calls can not be nested\r\n"))
 				continue
 			}
 			inTx = true
 			txQueue = make([][]string, 0)
 			_, _ = conn.Write([]byte("+OK\r\n"))
+			continue
 
 		case "EXEC":
 			if !inTx {
@@ -479,30 +418,48 @@ func handleClient(conn net.Conn, store *Store) {
 				continue
 			}
 
-			// Execution of queued commands will be handled in the next stage
 			inTx = false
+
 			if len(txQueue) == 0 {
 				_, _ = conn.Write([]byte("*0\r\n"))
 				txQueue = nil
 				continue
 			}
-			// empty return for now until execution state
-			_, _ = conn.Write([]byte("*0/r/n"))
+
+			var resp strings.Builder
+			resp.WriteString(fmt.Sprintf("*%d\r\n", len(txQueue)))
+
+			for _, queuedCmd := range txQueue {
+				out := executeCommand(queuedCmd, store)
+				resp.Write(out)
+			}
+
+			txQueue = nil
+			_, _ = conn.Write([]byte(resp.String()))
+			continue
 
 		case "DISCARD":
-
 			if !inTx {
 				_, _ = conn.Write([]byte("-ERR DISCARD without MULTI\r\n"))
 				continue
 			}
-
 			inTx = false
 			txQueue = nil
 			_, _ = conn.Write([]byte("+OK\r\n"))
+			continue
 
-		default:
-			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)
-			_, _ = conn.Write([]byte(errMsg))
+		case "BLPOP":
+			handleBLPOP(conn, store, args)
+			continue
+
+		case "XREAD":
+			handleXREAD(conn, store, args)
+			continue
+		}
+
+		out := executeCommand(args, store)
+		if out != nil {
+			_, _ = conn.Write(out)
 		}
 	}
 }

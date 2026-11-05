@@ -26,30 +26,21 @@ type Stream struct {
 	Entries []StreamEntry
 }
 
-// track listeners waiting on new stream entries
-type StreamWaiter struct {
-	key string
-	ch  chan string
-}
-
 var (
 	streamWaitersMu sync.Mutex
 	streamWaiters   = make(map[string][]chan struct{})
 )
 
 func registerStreamWaiter(key string) chan struct{} {
-
 	streamWaitersMu.Lock()
 	defer streamWaitersMu.Unlock()
 
 	ch := make(chan struct{}, 1)
 	streamWaiters[key] = append(streamWaiters[key], ch)
-
 	return ch
 }
 
 func removeStreamWaiter(key string, ch chan struct{}) {
-
 	streamWaitersMu.Lock()
 	defer streamWaitersMu.Unlock()
 
@@ -66,8 +57,7 @@ func removeStreamWaiter(key string, ch chan struct{}) {
 	}
 }
 
-func notifyStreamWiater(key string) {
-
+func notifyStreamWaiter(key string) {
 	streamWaitersMu.Lock()
 	defer streamWaitersMu.Unlock()
 
@@ -80,9 +70,7 @@ func notifyStreamWiater(key string) {
 	delete(streamWaiters, key)
 }
 
-// parseStreamID handles explicit IDs ("<ms>-<seq>") and partial auto-generation ("<ms>-*")
 func parseStreamID(id string) (ms int64, seq int64, isAutoSeq bool, err error) {
-
 	parts := strings.Split(id, "-")
 	if len(parts) != 2 {
 		return 0, 0, false, errors.New("invalid id format")
@@ -105,7 +93,6 @@ func parseStreamID(id string) (ms int64, seq int64, isAutoSeq bool, err error) {
 	return ms, seq, false, nil
 }
 
-// parseRangeBound parses start and end bounds for XRANGE including optional sequence numbers and - / +
 func parseRangeBound(bound string, isEnd bool) (int64, int64, error) {
 	if bound == "-" {
 		return 0, 0, nil
@@ -151,9 +138,7 @@ func compareStreamIDs(ms1, seq1, ms2, seq2 int64) int {
 	return 0
 }
 
-// XAdd validates, auto-generates IDs if necessary, and appends an entry to the stream
 func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -237,13 +222,11 @@ func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
 		Fields: fields,
 	})
 
-	// notify any blocked XREAD clients
-	go notifyStreamWiater(key)
+	go notifyStreamWaiter(key)
 
 	return finalID, nil
 }
 
-// XRange returns entries within the inclusive [start, end] boundary
 func (s *Store) XRange(key, startBound, endBound string) ([]StreamEntry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -290,7 +273,6 @@ func (s *Store) XRead(key, afterID string) ([]StreamEntry, error) {
 
 	var results []StreamEntry
 	for _, entry := range stream.Entries {
-		// strict inequality: entry > targetID
 		if compareStreamIDs(entry.Ms, entry.Seq, targetMs, targetSeq) > 0 {
 			results = append(results, entry)
 		}
@@ -299,7 +281,6 @@ func (s *Store) XRead(key, afterID string) ([]StreamEntry, error) {
 	return results, nil
 }
 
-// GetLastID returns the ID of the last entry in the stream, or "0-0" if empty
 func (s *Store) GetLastID(key string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

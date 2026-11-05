@@ -4,10 +4,15 @@ import "time"
 
 func (s *Store) RPush(key string, values ...string) int {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	s.lists[key] = append(s.lists[key], values...)
 	newLen := len(s.lists[key])
+
+	type notification struct {
+		ch  chan string
+		val string
+	}
+	var toNotify []notification
 
 	for len(s.lists[key]) > 0 && len(s.blocked[key]) > 0 {
 		ch := s.blocked[key][0]
@@ -22,7 +27,12 @@ func (s *Store) RPush(key string, values ...string) int {
 			delete(s.lists, key)
 		}
 
-		ch <- val
+		toNotify = append(toNotify, notification{ch: ch, val: val})
+	}
+	s.mu.Unlock()
+
+	for _, n := range toNotify {
+		n.ch <- n.val
 	}
 
 	return newLen
@@ -30,7 +40,6 @@ func (s *Store) RPush(key string, values ...string) int {
 
 func (s *Store) LPush(key string, values ...string) int {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	reversed := make([]string, len(values))
 	for i, v := range values {
@@ -39,6 +48,12 @@ func (s *Store) LPush(key string, values ...string) int {
 	s.lists[key] = append(reversed, s.lists[key]...)
 	newLen := len(s.lists[key])
 
+	type notification struct {
+		ch  chan string
+		val string
+	}
+	var toNotify []notification
+
 	for len(s.lists[key]) > 0 && len(s.blocked[key]) > 0 {
 		ch := s.blocked[key][0]
 		s.blocked[key] = s.blocked[key][1:]
@@ -52,7 +67,12 @@ func (s *Store) LPush(key string, values ...string) int {
 			delete(s.lists, key)
 		}
 
-		ch <- val
+		toNotify = append(toNotify, notification{ch: ch, val: val})
+	}
+	s.mu.Unlock()
+
+	for _, n := range toNotify {
+		n.ch <- n.val
 	}
 
 	return newLen
