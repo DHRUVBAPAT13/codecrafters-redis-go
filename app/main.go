@@ -82,56 +82,56 @@ func (s *Store) RPush(key string, values ...string) int {
 	defer s.mu.Unlock()
 
 	
-	// if there are blocked clients waiting on this key, fulfill them in FIFO order first
-	for len(values) > 0 && len(s.blocked[key]) > 0 {
+	// 1. append elements to the list
+	s.lists[key] = append(s.lists[key], values...)
+	newLen := len(s.lists[key])
+
+	// 2. deliver elements to blocked clients in FIFO order
+	for len(s.blocked[key]) > 0 && len(s.lists[key]) > 0 {
 		ch := s.blocked[key][0]
-		s.blocked[key] = s.blocked[key][1:] // remove the first channel from the slice
-		if len (s.blocked[key]) == 0 {
+		s.blocked[key] = s.blocked[key][1:]
+		if len(s.blocked[key]) == 0 {
 			delete(s.blocked, key)
 		}
 
-		val := values[0]
-		values = values[1:] // remove the first value from the slice
+		val := s.lists[key][0]
+		s.lists[key] = s.lists[key][1:]
+		if len(s.lists[key]) == 0 {
+			delete(s.lists, key)
+		}
 		ch <- val
 	}
-
-	// any remaining values go to the list
-	if len(values) > 0 {
-		s.lists[key] = append(s.lists[key], values...)
-	}
-
-	return len(s.lists[key])
+	return newLen
 }
 
 func (s *Store) LPush(key string, values ...string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// if there are blocked clients, deliver the head elements first
-	for len(values) > 0 && len(s.blocked[key]) > 0 {
+	// 1. prepend elements in reverse order
+	reversed := make([]string, len(values))
+	for i, v := range values {
+		reversed[len(values)-1-i] = v
+	}
+	s.lists[key] = append(reversed, s.lists[key]...)
+	newLen := len(s.lists[key])
+
+	// 2. deliver elements to waiting blocked clients in FIFO order
+	for len(s.blocked[key]) > 0 && len(s.lists[key]) > 0 {
 		ch := s.blocked[key][0]
-		s.blocked[key] = s.blocked[key][1:] // remove the first channel from the slice
-		if len (s.blocked[key]) == 0 {
+		s.blocked[key] = s.blocked[key][1:]
+		if len(s.blocked[key]) == 0 {
 			delete(s.blocked, key)
 		}
 
-		// in LPush, the last element of args ends at the very front
-		lastIdx := len(values) - 1
-		val := values[lastIdx]
-		values = values[:lastIdx]
+		val := s.lists[key][0]
+		s.lists[key] = s.lists[key][1:]
+		if len(s.lists[key]) == 0 {
+			delete(s.lists, key)
+		}
 		ch <- val
 	}
-
-	if len(values) > 0 {
-		reversed := make([]string, len(values))
-		for i, v := range values {
-			reversed[len(values)-1-i] = v
-		}
-		// prepend the remaining values to the list
-		s.lists[key] = append(reversed, s.lists[key]...)
-	}
-
-	return len(s.lists[key])
+	return newLen
 }
 
 func (s *Store) LRange(key string, start, stop int) []string {
@@ -215,7 +215,7 @@ func (s *Store) LPop(key string, count int) ([]string, bool) {
 func (s *Store) BLPop(key string) string {
 	s.mu.Lock()
 
-	// 1. if an element already exists, pop it immediately
+	// If list already has elements, pop immediately
 	if list, ok := s.lists[key]; ok && len(list) > 0 {
 		val := list[0]
 		s.lists[key] = list[1:]
@@ -226,14 +226,13 @@ func (s *Store) BLPop(key string) string {
 		return val
 	}
 
-	// 2. otherwise, register this client channel in FIFO order
+	// Register a channel in the waiting queue (FIFO)
 	ch := make(chan string, 1)
 	s.blocked[key] = append(s.blocked[key], ch)
 	s.mu.Unlock()
 
-	// wait indefinitely until an element is delivered via LPush or RPush
-	val := <-ch
-	return val
+	// Block until RPush/LPush sends an item
+	return <-ch
 
 } 
 
@@ -472,7 +471,7 @@ func handleClient(conn net.Conn, store *Store) {
 			}
 
 		case "BLPOP":
-			
+
 			if len(args) < 3 {
 				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'blpop' command\r\n"))
 				continue
