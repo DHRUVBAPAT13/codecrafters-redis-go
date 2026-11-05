@@ -221,9 +221,12 @@ func handleClient(conn net.Conn, store *Store) {
 			key := args[1]
 			id := args[2]
 
-			fields := make(map[string]string)
+			fields := make([]StreamField, 0, (len(args)-3)/2)
 			for i := 3; i < len(args); i += 2 {
-				fields[args[i]] = args[i+1]
+				fields = append(fields, StreamField{
+					Key:   args[i],
+					Value: args[i+1],
+				})
 			}
 
 			entryID, err := store.XAdd(key, id, fields)
@@ -237,6 +240,43 @@ func handleClient(conn net.Conn, store *Store) {
 			// Response is the entry ID encoded as a bulk string
 			resp := fmt.Sprintf("$%d\r\n%s\r\n", len(entryID), entryID)
 			_, _ = conn.Write([]byte(resp))
+
+		case "XRANGE":
+			if len(args) < 4 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'xrange' command\r\n"))
+				continue
+			}
+
+			key := args[1]
+			startBound := args[2]
+			endBound := args[3]
+
+			entries, err := store.XRange(key, startBound, endBound)
+			if err != nil {
+				resp := fmt.Sprintf("-%s\r\n", err.Error())
+				_, _ = conn.Write([]byte(resp))
+				continue
+			}
+
+			var resp strings.Builder
+			resp.WriteString(fmt.Sprintf("*%d\r\n", len(entries)))
+
+			for _, entry := range entries {
+
+				// each entry is a 2-element array: [ID, [k1, v1, k2, v2, ....]]
+				resp.WriteString("*2\r\n")
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(entry.ID), entry.ID))
+
+				// field array length is len(fields)*2
+				resp.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
+
+				for _, f := range entry.Fields {
+					resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Key), f.Key))
+					resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Value), f.Value))
+				}
+			}
+
+			_, _ = conn.Write([]byte(resp.String()))
 
 		default:
 			errMsg := fmt.Sprintf("-ERR unknown command '%s'\r\n", cmd)

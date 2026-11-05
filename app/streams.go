@@ -3,16 +3,22 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 )
 
+type StreamField struct {
+	Key   string
+	Value string
+}
+
 type StreamEntry struct {
 	ID     string
 	Ms     int64
 	Seq    int64
-	Fields map[string]string
+	Fields []StreamField
 }
 
 type Stream struct {
@@ -21,7 +27,6 @@ type Stream struct {
 
 // parseStreamID handles explicit IDs ("<ms>-<seq>") and partial auto-generation ("<ms>-*")
 func parseStreamID(id string) (ms int64, seq int64, isAutoSeq bool, err error) {
-
 	parts := strings.Split(id, "-")
 	if len(parts) != 2 {
 		return 0, 0, false, errors.New("invalid id format")
@@ -44,9 +49,54 @@ func parseStreamID(id string) (ms int64, seq int64, isAutoSeq bool, err error) {
 	return ms, seq, false, nil
 }
 
-// XAdd validates, auto-generates IDs if necessary, and appends an entry to the stream
-func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
+// parseRangeBound parses start and end bounds for XRANGE including optional sequence numbers and - / +
+func parseRangeBound(bound string, isEnd bool) (int64, int64, error) {
+	if bound == "-" {
+		return 0, 0, nil
+	}
+	if bound == "+" {
+		return math.MaxInt64, math.MaxInt64, nil
+	}
 
+	parts := strings.Split(bound, "-")
+	ms, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || ms < 0 {
+		return 0, 0, errors.New("invalid range bound")
+	}
+
+	if len(parts) == 1 {
+		if isEnd {
+			return ms, math.MaxInt64, nil
+		}
+		return ms, 0, nil
+	}
+
+	seq, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || seq < 0 {
+		return 0, 0, errors.New("invalid sequence number in bound")
+	}
+
+	return ms, seq, nil
+}
+
+func compareStreamIDs(ms1, seq1, ms2, seq2 int64) int {
+	if ms1 < ms2 {
+		return -1
+	}
+	if ms1 > ms2 {
+		return 1
+	}
+	if seq1 < seq2 {
+		return -1
+	}
+	if seq1 > seq2 {
+		return 1
+	}
+	return 0
+}
+
+// XAdd validates, auto-generates IDs if necessary, and appends an entry to the stream
+func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -61,17 +111,10 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 	var ms, seq int64
 
 	if id == "*" {
-
-		// Case 1: Full auto-generation (*)
 		nowMs := time.Now().UnixMilli()
 		if len(stream.Entries) > 0 {
 			lastEntry := stream.Entries[len(stream.Entries)-1]
-
-			if nowMs == lastEntry.Ms {
-				ms = lastEntry.Ms
-				seq = lastEntry.Seq + 1
-			} else if nowMs < lastEntry.Ms {
-				// Prevent wall-clock backwards jump from breaking monotonicity
+			if nowMs <= lastEntry.Ms {
 				ms = lastEntry.Ms
 				seq = lastEntry.Seq + 1
 			} else {
@@ -83,9 +126,7 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 			seq = 0
 		}
 	} else {
-		// Case 2 & 3: Partial auto-generation (<ms>-*) or Explicit ID (<ms>-<seq>)
 		parsedMs, parsedSeq, isAutoSeq, err := parseStreamID(id)
-
 		if err != nil {
 			return "", errors.New("ERR invalid stream ID specified as stream command argument")
 		}
@@ -95,7 +136,6 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 		if isAutoSeq {
 			if len(stream.Entries) > 0 {
 				lastEntry := stream.Entries[len(stream.Entries)-1]
-
 				if ms < lastEntry.Ms {
 					return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
 				}
@@ -118,12 +158,10 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 		} else {
 			seq = parsedSeq
 
-			// 0-0 is explicitly invalid
 			if ms == 0 && seq == 0 {
 				return "", errors.New("ERR The ID specified in XADD must be greater than 0-0")
 			}
 
-			// Strictly greater check
 			if len(stream.Entries) > 0 {
 				lastEntry := stream.Entries[len(stream.Entries)-1]
 				if ms < lastEntry.Ms || (ms == lastEntry.Ms && seq <= lastEntry.Seq) {
@@ -135,7 +173,6 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 
 	finalID := fmt.Sprintf("%d-%d", ms, seq)
 
-	// Ensure Ms and Seq are explicitly saved on the entry
 	stream.Entries = append(stream.Entries, StreamEntry{
 		ID:     finalID,
 		Ms:     ms,
@@ -144,4 +181,35 @@ func (s *Store) XAdd(key, id string, fields map[string]string) (string, error) {
 	})
 
 	return finalID, nil
+}
+
+// XRange returns entries within the inclusive [start, end] boundary
+func (s *Store) XRange(key, startBound, endBound string) ([]StreamEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stream, exists := s.streams[key]
+	if !exists || len(stream.Entries) == 0 {
+		return []StreamEntry{}, nil
+	}
+
+	startMs, startSeq, err := parseRangeBound(startBound, false)
+	if err != nil {
+		return nil, errors.New("ERR invalid start bound")
+	}
+
+	endMs, endSeq, err := parseRangeBound(endBound, true)
+	if err != nil {
+		return nil, errors.New("ERR invalid end bound")
+	}
+
+	var results []StreamEntry
+	for _, entry := range stream.Entries {
+		if compareStreamIDs(entry.Ms, entry.Seq, startMs, startSeq) >= 0 &&
+			compareStreamIDs(entry.Ms, entry.Seq, endMs, endSeq) <= 0 {
+			results = append(results, entry)
+		}
+	}
+
+	return results, nil
 }
