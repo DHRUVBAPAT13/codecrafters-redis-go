@@ -514,6 +514,12 @@ func main() {
 	config := ParseServerConfig()
 	store := NewStore()
 
+	// if running as replica, start the replication handshake with master
+	if config.Role == "slave" {
+		go StartReplicationHandshake(config)
+
+	}
+
 	l, err := net.Listen("tcp", config.Address())
 	if err != nil {
 		fmt.Printf("Failed to bind to port %d: %s", config.Port, err.Error())

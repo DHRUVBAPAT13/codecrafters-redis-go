@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -75,4 +77,34 @@ func (c ServerConfig) GetReplicationInfo() string {
 		sb.WriteString(fmt.Sprintf("master_repl_offset:%d\r\n", c.MasterReplOffset))
 	}
 	return sb.String()
+}
+
+func StartReplicationHandshake(config ServerConfig) {
+
+	masterAddr := fmt.Sprintf("%s:%d", config.MasterHost, config.MasterPort)
+	conn, err := net.Dial("tcp", masterAddr)
+
+	if err != nil {
+		fmt.Printf("Failed to connect to master %s: %s\n", masterAddr, err.Error())
+		return
+	}
+
+	// 1. send PING as RESP array
+	pingCommand := "*1\r\n$4\r\nPING\r\n"
+	_, err = conn.Write([]byte(pingCommand))
+	if err != nil {
+		fmt.Printf("Failed to send PING to master: %s\n", err.Error())
+		conn.Close()
+		return
+	}
+
+	reader := bufio.NewReader(conn)
+	// read response (+PONG\r\n)
+	_, err = reader.ReadString('\n')
+	if err != nil {
+		fmt.Printf("Failed to read PING response from master: %s", err.Error())
+		conn.Close()
+		return
+	}
+
 }
