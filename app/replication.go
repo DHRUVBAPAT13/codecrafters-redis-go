@@ -225,6 +225,21 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 			continue
 		}
 
+		cmd := strings.ToUpper(args[0])
+
+		// check if master is requesting replication acknowledge
+		if cmd == "REPLCONF" && len(args) >= 2 && strings.ToUpper(args[1]) == "GETACK" {
+
+			ackResp := "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n"
+
+			if _, err := conn.Write([]byte(ackResp)); err != nil {
+
+				fmt.Println("Failed to send REPLCONF ACK to master:", err.Error())
+				break
+			}
+			continue
+		}
+
 		executeCommand(args, store, config)
 	}
 }
