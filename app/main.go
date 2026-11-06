@@ -32,6 +32,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			infoContent = config.GetReplicationInfo()
 		}
 		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(infoContent), infoContent)
+
 	case "PING":
 		return []byte("+PONG\r\n")
 
@@ -62,6 +63,12 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		store.Set(key, val, expiry)
 		watchManager.TouchKey(key)
+
+		// Propagate write commands to connected replicas if running as master
+		if config.Role == "master" {
+			replicaRegistry.Propagate(EncodeRESPArray(args))
+		}
+
 		return []byte("+OK\r\n")
 
 	case "GET":

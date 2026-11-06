@@ -210,3 +210,30 @@ func StartReplicationHandshake(config ServerConfig) {
 
 	// Master connection will remain open for command propagation in upcoming stages
 }
+
+// EncodeRESPArray formats a slice of arguments into a RESP array byte slice
+func EncodeRESPArray(args []string) []byte {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("*%d\r\n", len(args)))
+	for _, arg := range args {
+		sb.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg))
+	}
+	return []byte(sb.String())
+}
+
+// Propagate broadcasts the raw RESP command to all registered replicas
+func (r *ReplicaRegistry) Propagate(rawCommand []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	activeReplicas := make([]net.Conn, 0, len(r.replicas))
+	for _, conn := range r.replicas {
+		_, err := conn.Write(rawCommand)
+		if err == nil {
+			activeReplicas = append(activeReplicas, conn)
+		} else {
+			_ = conn.Close()
+		}
+	}
+	r.replicas = activeReplicas
+}
