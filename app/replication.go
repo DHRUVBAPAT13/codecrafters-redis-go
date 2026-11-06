@@ -133,6 +133,12 @@ func StartReplicationHandshake(config ServerConfig) {
 		return
 	}
 
-	// Connection will be maintained for the upcoming PSYNC stage
+	// 4. send PSYNC ? -1
+	psyncCmd := "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
+	if err := sendAndReceive(psyncCmd, "PSYNC ?-1"); err != nil {
+		fmt.Println(err.Error())
+		conn.Close()
+		return
+	}
 
 }

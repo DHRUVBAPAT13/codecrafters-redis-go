@@ -219,6 +219,9 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 	case "REPLCONF":
 		return []byte("+OK\r\n")
 
+	case "PSYNC":
+		return fmt.Appendf(nil, "+FULLRESYNC %s 0\r\n", config.MasterReplID)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
