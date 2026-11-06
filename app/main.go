@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func executeCommand(args []string, store *Store) []byte {
+func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 	if len(args) == 0 {
 		return nil
 	}
@@ -20,6 +20,18 @@ func executeCommand(args []string, store *Store) []byte {
 	cmd := strings.ToUpper(args[0])
 
 	switch cmd {
+
+	case "INFO":
+		section := ""
+		if len(args) > 1 {
+			section = strings.ToLower(args[1])
+		}
+
+		var infoContent string
+		if section == "replication" || section == "" {
+			infoContent = config.GetReplicationInfo()
+		}
+		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(infoContent), infoContent)
 	case "PING":
 		return []byte("+PONG\r\n")
 
@@ -379,7 +391,7 @@ func handleXREAD(conn net.Conn, store *Store, args []string) {
 	_, _ = conn.Write([]byte(resp.String()))
 }
 
-func handleClient(conn net.Conn, store *Store) {
+func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
@@ -463,7 +475,7 @@ func handleClient(conn net.Conn, store *Store) {
 			resp.WriteString(fmt.Sprintf("*%d\r\n", len(txState.Queue)))
 
 			for _, queueCmd := range txState.Queue {
-				out := executeCommand(queueCmd, store)
+				out := executeCommand(queueCmd, store, config)
 				resp.Write(out)
 			}
 
@@ -490,7 +502,7 @@ func handleClient(conn net.Conn, store *Store) {
 
 		}
 
-		out := executeCommand(args, store)
+		out := executeCommand(args, store, config)
 		if out != nil {
 			_, _ = conn.Write(out)
 		}
@@ -516,6 +528,6 @@ func main() {
 			continue
 		}
 
-		go handleClient(conn, store)
+		go handleClient(conn, store, config)
 	}
 }
