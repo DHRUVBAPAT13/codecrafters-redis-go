@@ -9,10 +9,12 @@ import (
 )
 
 type ServerConfig struct {
-	Port       int
-	Role       string
-	MasterHost string
-	MasterPort int
+	Port             int
+	Role             string
+	MasterHost       string
+	MasterPort       int
+	MasterReplID     string
+	MasterReplOffset int
 }
 
 func ParseServerConfig() ServerConfig {
@@ -21,8 +23,10 @@ func ParseServerConfig() ServerConfig {
 	flag.Parse()
 
 	config := ServerConfig{
-		Port: *port,
-		Role: "master",
+		Port:             *port,
+		Role:             "master",
+		MasterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
+		MasterReplOffset: 0,
 	}
 
 	// Handle case where flag.Parse might receive replicaof as flag or separate args
@@ -65,5 +69,10 @@ func (c ServerConfig) Address() string {
 func (c ServerConfig) GetReplicationInfo() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("role:%s\r\n", c.Role))
+
+	if c.Role == "master" {
+		sb.WriteString(fmt.Sprintf("master_repl_id:%s\r\n", c.MasterReplID))
+		sb.WriteString(fmt.Sprintf("master_repl_offset:%d\r\n", c.MasterReplOffset))
+	}
 	return sb.String()
 }
