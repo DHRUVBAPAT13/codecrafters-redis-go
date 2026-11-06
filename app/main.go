@@ -226,6 +226,15 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 	case "REPLCONF":
 		return []byte("+OK\r\n")
 
+	case "WAIT":
+		if len(args) > 3 {
+			return []byte("ERR wrong number of arguments for 'wait' command\r\n")
+		}
+
+		// when no replicas are connected or waiting for 0 replicas, return the connected count immediately
+		count := replicaRegistry.Count()
+		return fmt.Appendf(nil, ":%d\r\n", count)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

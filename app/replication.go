@@ -359,3 +359,9 @@ func (r *ReplicaRegistry) Propagate(rawCommand []byte) {
 	}
 	r.replicas = activeReplicas
 }
+
+func (r *ReplicaRegistry) Count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.replicas)
+}
