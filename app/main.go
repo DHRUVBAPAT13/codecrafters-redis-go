@@ -372,8 +372,7 @@ func handleClient(conn net.Conn, store *Store) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
-	inTx := false
-	var txQueue [][]string
+	txState := NewClientTxState()
 
 	for {
 		args, err := readRESPArray(reader)
@@ -391,60 +390,73 @@ func handleClient(conn net.Conn, store *Store) {
 
 		cmd := strings.ToUpper(args[0])
 
-		if inTx && cmd != "EXEC" && cmd != "DISCARD" {
-			if cmd == "MULTI" {
+		// 1. Transaction Interceptor:
+		// Commands inside MULTI get queued except transaction control commands (EXEC, DISCARD)
+		// and commands explicitly forbidden inside MULTI (MULTI, WATCH)
+
+		if txState.InTx {
+			switch cmd {
+			case "MULTI":
 				_, _ = conn.Write([]byte("-ERR MULTI calls can not be nested\r\n"))
 				continue
+
+			case "WATCH":
+				_, _ = conn.Write(txState.HandleWatch(args))
+				continue
+
+			case "EXEC", "DISCARD":
+				// fall through to switch statements below
+
+			default:
+				txState.Queue = append(txState.Queue, args)
+				_, _ = conn.Write([]byte("+QUEUED\r\n"))
+				continue
 			}
-			txQueue = append(txQueue, args)
-			_, _ = conn.Write([]byte("+QUEUED\r\n"))
-			continue
 		}
 
+		// 2. Command routing outside of tx or transaction control
 		switch cmd {
+
+		case "WATCH":
+			_, _ = conn.Write(txState.HandleWatch(args))
+			continue
+
 		case "MULTI":
-			if inTx {
-				_, _ = conn.Write([]byte("-ERR MULTI calls can not be nested\r\n"))
-				continue
-			}
-			inTx = true
-			txQueue = make([][]string, 0)
-			_, _ = conn.Write([]byte("+OK\r\n"))
+			_, _ = conn.Write(txState.HandleMulti())
 			continue
 
 		case "EXEC":
-			if !inTx {
+			if !txState.InTx {
 				_, _ = conn.Write([]byte("-ERR EXEC without MULTI\r\n"))
 				continue
 			}
 
-			inTx = false
+			txState.InTx = true
 
-			if len(txQueue) == 0 {
+			if len(txState.Queue) == 0 {
 				_, _ = conn.Write([]byte("*0\r\n"))
-				txQueue = nil
+				txState.Reset()
 				continue
 			}
 
 			var resp strings.Builder
-			resp.WriteString(fmt.Sprintf("*%d\r\n", len(txQueue)))
+			resp.WriteString(fmt.Sprintf("*%d\r\n", len(txState.Queue)))
 
-			for _, queuedCmd := range txQueue {
-				out := executeCommand(queuedCmd, store)
+			for _, queueCmd := range txState.Queue {
+				out := executeCommand(queueCmd, store)
 				resp.Write(out)
 			}
 
-			txQueue = nil
+			txState.Reset()
 			_, _ = conn.Write([]byte(resp.String()))
 			continue
 
 		case "DISCARD":
-			if !inTx {
+			if !txState.InTx {
 				_, _ = conn.Write([]byte("-ERR DISCARD without MULTI\r\n"))
 				continue
 			}
-			inTx = false
-			txQueue = nil
+			txState.Reset()
 			_, _ = conn.Write([]byte("+OK\r\n"))
 			continue
 
@@ -454,21 +466,6 @@ func handleClient(conn net.Conn, store *Store) {
 
 		case "XREAD":
 			handleXREAD(conn, store, args)
-			continue
-
-		case "WATCH":
-			if inTx {
-				_, _ = conn.Write([]byte("-ERR WATCH inside MULTI is not allowed\r\n"))
-				continue
-			}
-
-			if len(args) < 2 {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'watch' command\r\n"))
-				continue
-			}
-
-			// Watch state tracking will be added in upcoming stages
-			_, _ = conn.Write([]byte("+OK\r\n"))
 			continue
 
 		}
