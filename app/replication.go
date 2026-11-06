@@ -111,7 +111,10 @@ func readRESPArrayWithBytes(reader *bufio.Reader) ([]string, int, error) {
 		if err != nil {
 			return "", 0, err
 		}
-		return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\n"), len(line), nil
+		// len(line) reflects the exact raw wire bytes including \r\n
+		rawBytes := len(line)
+		trimmed := strings.TrimRight(line, "\r\n")
+		return trimmed, rawBytes, nil
 	}
 
 	header, n, err := readLine()
@@ -261,13 +264,17 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 			return
 		}
 
-		rdbHeader = strings.TrimSuffix(rdbHeader, "\r\n")
-		rdbHeader = strings.TrimSuffix(rdbHeader, "\n")
+		rdbHeader = strings.TrimRight(rdbHeader, "\r\n")
+
 		if strings.HasPrefix(rdbHeader, "$") {
+
 			rdbLen, err := strconv.Atoi(rdbHeader[1:])
 			if err == nil && rdbLen > 0 {
+
 				rdbBuf := make([]byte, rdbLen)
+
 				if _, err := io.ReadFull(reader, rdbBuf); err != nil {
+
 					fmt.Println("Failed to read RDB binary content:", err.Error())
 					conn.Close()
 					return
