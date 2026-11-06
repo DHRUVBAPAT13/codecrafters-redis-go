@@ -5,27 +5,27 @@ import "sync"
 type ClientTxState struct {
 	InTx        bool
 	Queue       [][]string
-	WatchedKeys map[string]struct{}
+	WatchedKeys map[string]uint64
 }
 
 func NewClientTxState() *ClientTxState {
 	return &ClientTxState{
 		InTx:        false,
 		Queue:       make([][]string, 0),
-		WatchedKeys: make(map[string]struct{}),
+		WatchedKeys: make(map[string]uint64),
 	}
 }
 
 // global registry for watched keys across all clients (to check modification upon EXEC)
 type WatchManager struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 	// maps key -> slice of channels or state pointers if needed, or version tracking
 	keyVersions map[string]uint64
 }
 
-/*var watchManager = &WatchManager{
+var watchManager = &WatchManager{
 	keyVersions: make(map[string]uint64),
-}*/
+}
 
 func (wm *WatchManager) TouchKey(key string) {
 	wm.mu.Lock()
@@ -35,8 +35,8 @@ func (wm *WatchManager) TouchKey(key string) {
 }
 
 func (wm *WatchManager) GetKeyVersion(key string) uint64 {
-	wm.mu.Lock()
-	defer wm.mu.Unlock()
+	wm.mu.RLock()
+	defer wm.mu.RUnlock()
 
 	return wm.keyVersions[key]
 }
@@ -52,7 +52,7 @@ func (tx *ClientTxState) HandleWatch(args []string) []byte {
 	}
 
 	for _, key := range args[1:] {
-		tx.WatchedKeys[key] = struct{}{}
+		tx.WatchedKeys[key] = watchManager.GetKeyVersion(key)
 	}
 
 	return []byte("+OK\r\n")
@@ -69,9 +69,19 @@ func (tx *ClientTxState) HandleMulti() []byte {
 	return []byte("+OK\r\n")
 }
 
+func (tx *ClientTxState) IsDirty() bool {
+
+	for key, originalVersion := range tx.WatchedKeys {
+		if watchManager.GetKeyVersion(key) != originalVersion {
+			return true
+		}
+	}
+	return false
+}
+
 // reset clears transaction and watch state
 func (tx *ClientTxState) Reset() {
 	tx.InTx = false
 	tx.Queue = nil
-	tx.WatchedKeys = make(map[string]struct{})
+	tx.WatchedKeys = make(map[string]uint64)
 }

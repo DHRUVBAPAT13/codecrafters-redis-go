@@ -49,6 +49,7 @@ func executeCommand(args []string, store *Store) []byte {
 		}
 
 		store.Set(key, val, expiry)
+		watchManager.TouchKey(key)
 		return []byte("+OK\r\n")
 
 	case "GET":
@@ -77,6 +78,7 @@ func executeCommand(args []string, store *Store) []byte {
 		if err != nil {
 			return fmt.Appendf(nil, "-%s\r\n", err.Error())
 		}
+		watchManager.TouchKey(key)
 		return fmt.Appendf(nil, ":%d\r\n", newVal)
 
 	case "RPUSH":
@@ -85,6 +87,7 @@ func executeCommand(args []string, store *Store) []byte {
 		}
 		key := args[1]
 		length := store.RPush(key, args[2:]...)
+		watchManager.TouchKey(key)
 		return fmt.Appendf(nil, ":%d\r\n", length)
 
 	case "LPUSH":
@@ -93,6 +96,7 @@ func executeCommand(args []string, store *Store) []byte {
 		}
 		key := args[1]
 		length := store.LPush(key, args[2:]...)
+		watchManager.TouchKey(key)
 		return fmt.Appendf(nil, ":%d\r\n", length)
 
 	case "LPOP":
@@ -113,6 +117,8 @@ func executeCommand(args []string, store *Store) []byte {
 		if !ok || len(vals) == 0 {
 			return []byte("$-1\r\n")
 		}
+
+		watchManager.TouchKey(key)
 
 		if len(args) == 2 {
 			return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(vals[0]), vals[0])
@@ -219,6 +225,8 @@ func handleBLPOP(conn net.Conn, store *Store, args []string) {
 		_, _ = conn.Write([]byte("*-1\r\n"))
 		return
 	}
+
+	watchManager.TouchKey(key)
 
 	resp := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(val), val)
 	_, _ = conn.Write([]byte(resp))
@@ -431,7 +439,11 @@ func handleClient(conn net.Conn, store *Store) {
 				continue
 			}
 
-			txState.InTx = true
+			// if any watched key was modified, abort transaction
+			if txState.IsDirty() {
+				txState.Reset()
+				_, _ = conn.Write([]byte("*-1\r\n"))
+			}
 
 			if len(txState.Queue) == 0 {
 				_, _ = conn.Write([]byte("*0\r\n"))
