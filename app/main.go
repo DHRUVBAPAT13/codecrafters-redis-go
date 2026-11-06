@@ -498,11 +498,13 @@ func handleClient(conn net.Conn, store *Store) {
 }
 
 func main() {
+
+	config := ParseServerConfig()
 	store := NewStore()
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	l, err := net.Listen("tcp", config.Address())
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379:", err.Error())
+		fmt.Printf("Failed to bind to port %d: %s", config.Port, err.Error())
 		os.Exit(1)
 	}
 	defer l.Close()
