@@ -71,7 +71,7 @@ func (c ServerConfig) GetReplicationInfo() string {
 	sb.WriteString(fmt.Sprintf("role:%s\r\n", c.Role))
 
 	if c.Role == "master" {
-		sb.WriteString(fmt.Sprintf("master_repl_id:%s\r\n", c.MasterReplID))
+		sb.WriteString(fmt.Sprintf("master_replid:%s\r\n", c.MasterReplID))
 		sb.WriteString(fmt.Sprintf("master_repl_offset:%d\r\n", c.MasterReplOffset))
 	}
 	return sb.String()
