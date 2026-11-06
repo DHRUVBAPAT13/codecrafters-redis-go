@@ -103,63 +103,69 @@ func (c ServerConfig) GetReplicationInfo() string {
 
 // readRESPArrayWithBytes reads a RESP Array from reader and counts the total raw bytes consumed
 func readRESPArrayWithBytes(reader *bufio.Reader) ([]string, int, error) {
-
 	bytesConsumed := 0
 
-	readLine := func() (string, int, error) {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return "", 0, err
+	// Helper to read until \r\n and accurately track wire bytes
+	readRESPLine := func() (string, int, error) {
+		lineBytes := make([]byte, 0, 64)
+		for {
+			b, err := reader.ReadByte()
+			if err != nil {
+				return "", len(lineBytes), err
+			}
+			lineBytes = append(lineBytes, b)
+			if len(lineBytes) >= 2 && lineBytes[len(lineBytes)-2] == '\r' && lineBytes[len(lineBytes)-1] == '\n' {
+				break
+			}
 		}
-		// len(line) reflects the exact raw wire bytes including \r\n
-		rawBytes := len(line)
-		trimmed := strings.TrimRight(line, "\r\n")
-		return trimmed, rawBytes, nil
+		rawLen := len(lineBytes)
+		content := string(lineBytes[:rawLen-2])
+		return content, rawLen, nil
 	}
 
-	header, n, err := readLine()
+	header, n, err := readRESPLine()
 	if err != nil {
-		return nil, 0, err
+		return nil, n, err
 	}
 	bytesConsumed += n
 
 	if len(header) == 0 || header[0] != '*' {
-		return nil, bytesConsumed, fmt.Errorf("expected array prefix '*', got: %s", header)
+		return nil, bytesConsumed, fmt.Errorf("expected array prefix '*', got: %q", header)
 	}
 
 	numElements, err := strconv.Atoi(header[1:])
 	if err != nil {
-		return nil, bytesConsumed, err
+		return nil, bytesConsumed, fmt.Errorf("invalid array length %q: %w", header[1:], err)
 	}
 
 	args := make([]string, 0, numElements)
 	for i := 0; i < numElements; i++ {
-
-		strHeader, n, err := readLine()
+		strHeader, n, err := readRESPLine()
 		if err != nil {
 			return nil, bytesConsumed, err
 		}
 		bytesConsumed += n
 
-		if len(strHeader) == 0 || strHeader[0] != ' ' {
-			return nil, bytesConsumed, fmt.Errorf("expected bulk string prefix '$', got: %s", strHeader)
+		if len(strHeader) == 0 || strHeader[0] != '$' {
+			return nil, bytesConsumed, fmt.Errorf("expected bulk string prefix '$', got: %q", strHeader)
 		}
 
-		strlen, err := strconv.Atoi(strHeader[1:])
+		strLen, err := strconv.Atoi(strHeader[1:])
 		if err != nil {
-			return nil, bytesConsumed, err
+			return nil, bytesConsumed, fmt.Errorf("invalid bulk string length %q: %w", strHeader[1:], err)
 		}
 
-		buf := make([]byte, strlen)
+		buf := make([]byte, strLen)
 		nRead, err := io.ReadFull(reader, buf)
 		bytesConsumed += nRead
 		if err != nil {
 			return nil, bytesConsumed, err
 		}
 
-		// read trailing \r\n after bulk string content
+		// Read the trailing \r\n after the bulk string content
 		crlf := make([]byte, 2)
 		nRead, err = io.ReadFull(reader, crlf)
+		bytesConsumed += nRead
 		if err != nil {
 			return nil, bytesConsumed, err
 		}
@@ -247,36 +253,34 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 
 	// 4. PSYNC ? -1
 	psyncCmd := "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
-	psyncResp, err := sendAndReceive(psyncCmd, "PSYNC ? -1")
-	if err != nil {
-		fmt.Println(err.Error())
-		conn.Close()
+	if _, err := conn.Write([]byte(psyncCmd)); err != nil {
+		fmt.Println("Failed to send PSYNC:", err.Error())
 		return
 	}
 
-	// If master answers with FULLRESYNC, consume the incoming RDB file
+	// Read "+FULLRESYNC <id> <offset>\r\n"
+	psyncResp, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("Failed to read PSYNC response:", err.Error())
+		return
+	}
+
 	if strings.HasPrefix(psyncResp, "+FULLRESYNC") {
-		// Read RDB header: $<length>\r\n
+		// Read RDB header line: "$<len>\r\n"
 		rdbHeader, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Failed to read RDB header:", err.Error())
-			conn.Close()
 			return
 		}
 
-		trimmedHeader := strings.TrimRight(rdbHeader, "\r\n")
-
-		if strings.HasPrefix(trimmedHeader, "$") {
-
-			rdbLen, err := strconv.Atoi(trimmedHeader[1:])
+		rdbHeader = strings.TrimSpace(rdbHeader)
+		if strings.HasPrefix(rdbHeader, "$") {
+			rdbLen, err := strconv.Atoi(rdbHeader[1:])
 			if err == nil && rdbLen > 0 {
-
 				rdbBuf := make([]byte, rdbLen)
-
+				// Read EXACTLY rdbLen bytes without expecting trailing \r\n
 				if _, err := io.ReadFull(reader, rdbBuf); err != nil {
-
 					fmt.Println("Failed to read RDB binary content:", err.Error())
-					conn.Close()
 					return
 				}
 			}
@@ -287,6 +291,7 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 	processedOffset := 0
 
 	for {
+		// Use readRESPArrayWithBytes here:
 		args, cmdBytes, err := readRESPArrayWithBytes(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -303,7 +308,6 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 		cmd := strings.ToUpper(args[0])
 
 		if cmd == "REPLCONF" && len(args) >= 2 && strings.ToUpper(args[1]) == "GETACK" {
-			// Acknowledge the offset before this command
 			offsetStr := strconv.Itoa(processedOffset)
 			ackPayload := fmt.Sprintf(
 				"*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$%d\r\n%s\r\n",
