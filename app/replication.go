@@ -264,11 +264,11 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 			return
 		}
 
-		rdbHeader = strings.TrimRight(rdbHeader, "\r\n")
+		trimmedHeader := strings.TrimRight(rdbHeader, "\r\n")
 
-		if strings.HasPrefix(rdbHeader, "$") {
+		if strings.HasPrefix(trimmedHeader, "$") {
 
-			rdbLen, err := strconv.Atoi(rdbHeader[1:])
+			rdbLen, err := strconv.Atoi(trimmedHeader[1:])
 			if err == nil && rdbLen > 0 {
 
 				rdbBuf := make([]byte, rdbLen)
