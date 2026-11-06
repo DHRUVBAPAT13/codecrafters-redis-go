@@ -498,8 +498,8 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 		case "PSYNC":
 			if err := HandleMasterPSYNC(conn, config); err != nil {
 				fmt.Println("Error handling PSYNC", err.Error())
-				continue
 			}
+			continue
 
 		case "BLPOP":
 			handleBLPOP(conn, store, args)
