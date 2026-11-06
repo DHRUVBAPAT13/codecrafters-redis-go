@@ -89,22 +89,50 @@ func StartReplicationHandshake(config ServerConfig) {
 		return
 	}
 
+	reader := bufio.NewReader(conn)
+
+	// helper to senda resp command and await a single line response
+	sendAndReceive := func(payload string, desc string) error {
+		if _, err := conn.Write([]byte(payload)); err != nil {
+			return fmt.Errorf("Failed to send %s: %w", desc, err)
+		}
+		resp, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("Failed to read response for %s: %w", desc, err)
+		}
+		_ = resp
+		return nil
+	}
+
 	// 1. send PING as RESP array
 	pingCommand := "*1\r\n$4\r\nPING\r\n"
-	_, err = conn.Write([]byte(pingCommand))
-	if err != nil {
+	if err := sendAndReceive(pingCommand, "PING"); err != nil {
 		fmt.Printf("Failed to send PING to master: %s\n", err.Error())
 		conn.Close()
 		return
 	}
 
-	reader := bufio.NewReader(conn)
-	// read response (+PONG\r\n)
-	_, err = reader.ReadString('\n')
-	if err != nil {
-		fmt.Printf("Failed to read PING response from master: %s", err.Error())
+	// 2. Send REPLCONF listening-port <PORT>
+	portStr := strconv.Itoa(config.Port)
+	replconfPortCmd := fmt.Sprintf(
+		"*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$%d\r\n%s\r\n",
+		len(portStr),
+		portStr,
+	)
+	if err := sendAndReceive(replconfPortCmd, "REPLCONF listening-port"); err != nil {
+		fmt.Println(err.Error())
 		conn.Close()
 		return
 	}
+
+	// 3. Send REPLCONF capa psync2
+	replconfCapaCmd := "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"
+	if err := sendAndReceive(replconfCapaCmd, "REPLCONF capa psync2"); err != nil {
+		fmt.Println(err.Error())
+		conn.Close()
+		return
+	}
+
+	// Connection will be maintained for the upcoming PSYNC stage
 
 }

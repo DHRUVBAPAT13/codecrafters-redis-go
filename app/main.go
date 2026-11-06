@@ -216,6 +216,9 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 	case "UNWATCH":
 		return []byte("+OK\r\n")
 
+	case "REPLCONF":
+		return []byte("+OK\r\n")
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
