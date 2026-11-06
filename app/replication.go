@@ -101,6 +101,72 @@ func (c ServerConfig) GetReplicationInfo() string {
 	return sb.String()
 }
 
+// readRESPArrayWithBytes reads a RESP Array from reader and counts the total raw bytes consumed
+func readRESPArrayWithBytes(reader *bufio.Reader) ([]string, int, error) {
+
+	bytesConsumed := 0
+
+	readLine := func() (string, int, error) {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", 0, err
+		}
+		return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\n"), len(line), nil
+	}
+
+	header, n, err := readLine()
+	if err != nil {
+		return nil, 0, err
+	}
+	bytesConsumed += n
+
+	if len(header) == 0 || header[0] != '*' {
+		return nil, bytesConsumed, fmt.Errorf("expected array prefix '*', got: %s", header)
+	}
+
+	numElements, err := strconv.Atoi(header[1:])
+	if err != nil {
+		return nil, bytesConsumed, err
+	}
+
+	args := make([]string, 0, numElements)
+	for i := 0; i < numElements; i++ {
+
+		strHeader, n, err := readLine()
+		if err != nil {
+			return nil, bytesConsumed, err
+		}
+		bytesConsumed += n
+
+		if len(strHeader) == 0 || strHeader[0] != ' ' {
+			return nil, bytesConsumed, fmt.Errorf("expected bulk string prefix '$', got: %s", strHeader)
+		}
+
+		strlen, err := strconv.Atoi(strHeader[1:])
+		if err != nil {
+			return nil, bytesConsumed, err
+		}
+
+		buf := make([]byte, strlen)
+		nRead, err := io.ReadFull(reader, buf)
+		bytesConsumed += nRead
+		if err != nil {
+			return nil, bytesConsumed, err
+		}
+
+		// read trailing \r\n after bulk string content
+		crlf := make([]byte, 2)
+		nRead, err = io.ReadFull(reader, crlf)
+		if err != nil {
+			return nil, bytesConsumed, err
+		}
+
+		args = append(args, string(buf))
+	}
+
+	return args, bytesConsumed, nil
+}
+
 // HandleMasterPSYNC responds to PSYNC with +FULLRESYNC and transmits the empty RDB file
 func HandleMasterPSYNC(conn net.Conn, config ServerConfig) error {
 	fullResyncResp := fmt.Sprintf("+FULLRESYNC %s 0\r\n", config.MasterReplID)
@@ -210,9 +276,11 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 		}
 	}
 
-	// 5. continuous command processing loop from master
+	// 5. Continuous command processing loop from master
+	processedOffset := 0
+
 	for {
-		args, err := readRESPArray(reader)
+		args, cmdBytes, err := readRESPArrayWithBytes(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -227,20 +295,30 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 
 		cmd := strings.ToUpper(args[0])
 
-		// check if master is requesting replication acknowledge
 		if cmd == "REPLCONF" && len(args) >= 2 && strings.ToUpper(args[1]) == "GETACK" {
+			// Acknowledge the offset before this command
+			offsetStr := strconv.Itoa(processedOffset)
+			ackPayload := fmt.Sprintf(
+				"*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$%d\r\n%s\r\n",
+				len(offsetStr),
+				offsetStr,
+			)
 
-			ackResp := "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n"
-
-			if _, err := conn.Write([]byte(ackResp)); err != nil {
-
-				fmt.Println("Failed to send REPLCONF ACK to master:", err.Error())
+			if _, err := conn.Write([]byte(ackPayload)); err != nil {
+				fmt.Println("Failed to send REPLCONF ACK:", err.Error())
 				break
 			}
+
+			// Add the bytes of the GETACK command itself after sending the ACK
+			processedOffset += cmdBytes
 			continue
 		}
 
+		// Silently execute commands (SET, PING, etc.)
 		executeCommand(args, store, config)
+
+		// Increment offset by the bytes consumed for this command
+		processedOffset += cmdBytes
 	}
 }
 
