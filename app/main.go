@@ -532,7 +532,7 @@ func main() {
 
 	// if running as replica, start the replication handshake with master
 	if config.Role == "slave" {
-		go StartReplicationHandshake(config)
+		go StartReplicationHandshake(config, store)
 
 	}
 

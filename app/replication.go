@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -125,7 +126,8 @@ func HandleMasterPSYNC(conn net.Conn, config ServerConfig) error {
 }
 
 // StartReplicationHandshake connects to the master and runs replica handshake
-func StartReplicationHandshake(config ServerConfig) {
+func StartReplicationHandshake(config ServerConfig, store *Store) {
+
 	masterAddr := fmt.Sprintf("%s:%d", config.MasterHost, config.MasterPort)
 	conn, err := net.Dial("tcp", masterAddr)
 	if err != nil {
@@ -208,7 +210,23 @@ func StartReplicationHandshake(config ServerConfig) {
 		}
 	}
 
-	// Master connection will remain open for command propagation in upcoming stages
+	// 5. continuous command processing loop from master
+	for {
+		args, err := readRESPArray(reader)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			fmt.Println("Master connection read error:", err.Error())
+			break
+		}
+
+		if len(args) == 0 {
+			continue
+		}
+
+		executeCommand(args, store, config)
+	}
 }
 
 // EncodeRESPArray formats a slice of arguments into a RESP array byte slice
