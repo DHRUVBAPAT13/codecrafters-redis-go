@@ -201,6 +201,9 @@ func executeCommand(args []string, store *Store) []byte {
 		}
 		return []byte(resp.String())
 
+	case "UNWATCH":
+		return []byte("+OK\r\n")
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
@@ -427,6 +430,10 @@ func handleClient(conn net.Conn, store *Store) {
 
 		case "WATCH":
 			_, _ = conn.Write(txState.HandleWatch(args))
+			continue
+
+		case "UNWATCH":
+			_, _ = conn.Write(txState.HandleUnwatch())
 			continue
 
 		case "MULTI":

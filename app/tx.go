@@ -85,3 +85,8 @@ func (tx *ClientTxState) Reset() {
 	tx.Queue = nil
 	tx.WatchedKeys = make(map[string]uint64)
 }
+
+func (tx *ClientTxState) HandleUnwatch() []byte {
+	tx.WatchedKeys = make(map[string]uint64)
+	return []byte("+OK\r\n")
+}
