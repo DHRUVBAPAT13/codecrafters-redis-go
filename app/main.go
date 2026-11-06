@@ -443,6 +443,7 @@ func handleClient(conn net.Conn, store *Store) {
 			if txState.IsDirty() {
 				txState.Reset()
 				_, _ = conn.Write([]byte("*-1\r\n"))
+				continue
 			}
 
 			if len(txState.Queue) == 0 {
