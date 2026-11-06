@@ -2,26 +2,48 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+// Empty RDB file (version 11) represented in base64
+const emptyRDBBase64 = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
 
 type ServerConfig struct {
 	Port             int
-	Role             string
+	Role             string // "master" or "slave"
 	MasterHost       string
 	MasterPort       int
 	MasterReplID     string
 	MasterReplOffset int
 }
 
+// ReplicaRegistry holds active replica connections for future command propagation
+type ReplicaRegistry struct {
+	mu       sync.Mutex
+	replicas []net.Conn
+}
+
+var replicaRegistry = &ReplicaRegistry{
+	replicas: make([]net.Conn, 0),
+}
+
+func (r *ReplicaRegistry) Register(conn net.Conn) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.replicas = append(r.replicas, conn)
+}
+
 func ParseServerConfig() ServerConfig {
-	port := flag.Int("port", 6379, "Port to listen to")
-	replicaOf := flag.String("replicaof", "", "Master host and portto replicate it")
+	port := flag.Int("port", 6379, "Port to listen on")
+	replicaOf := flag.String("replicaof", "", "Master host and port to replicate")
 	flag.Parse()
 
 	config := ServerConfig{
@@ -31,12 +53,10 @@ func ParseServerConfig() ServerConfig {
 		MasterReplOffset: 0,
 	}
 
-	// Handle case where flag.Parse might receive replicaof as flag or separate args
 	var replicaArg string
 	if *replicaOf != "" {
 		replicaArg = *replicaOf
 	} else {
-		// Check for --replicaof in os.Args if passed as two separate values (e.g. --replicaof localhost 6379)
 		for i, arg := range os.Args {
 			if (arg == "--replicaof" || arg == "-replicaof") && i+1 < len(os.Args) {
 				if i+2 < len(os.Args) && !strings.HasPrefix(os.Args[i+1], "-") && !strings.HasPrefix(os.Args[i+2], "-") {
@@ -76,14 +96,38 @@ func (c ServerConfig) GetReplicationInfo() string {
 		sb.WriteString(fmt.Sprintf("master_replid:%s\r\n", c.MasterReplID))
 		sb.WriteString(fmt.Sprintf("master_repl_offset:%d\r\n", c.MasterReplOffset))
 	}
+
 	return sb.String()
 }
 
-func StartReplicationHandshake(config ServerConfig) {
+// HandleMasterPSYNC responds to PSYNC with +FULLRESYNC and transmits the empty RDB file
+func HandleMasterPSYNC(conn net.Conn, config ServerConfig) error {
+	fullResyncResp := fmt.Sprintf("+FULLRESYNC %s 0\r\n", config.MasterReplID)
+	if _, err := conn.Write([]byte(fullResyncResp)); err != nil {
+		return err
+	}
 
+	rdbBytes, err := base64.StdEncoding.DecodeString(emptyRDBBase64)
+	if err != nil {
+		return fmt.Errorf("failed to decode empty rdb: %w", err)
+	}
+
+	// Format: $<length>\r\n<contents> (no trailing \r\n)
+	header := fmt.Sprintf("$%d\r\n", len(rdbBytes))
+	payload := append([]byte(header), rdbBytes...)
+
+	if _, err := conn.Write(payload); err != nil {
+		return err
+	}
+
+	replicaRegistry.Register(conn)
+	return nil
+}
+
+// StartReplicationHandshake connects to the master and runs replica handshake
+func StartReplicationHandshake(config ServerConfig) {
 	masterAddr := fmt.Sprintf("%s:%d", config.MasterHost, config.MasterPort)
 	conn, err := net.Dial("tcp", masterAddr)
-
 	if err != nil {
 		fmt.Printf("Failed to connect to master %s: %s\n", masterAddr, err.Error())
 		return
@@ -91,54 +135,78 @@ func StartReplicationHandshake(config ServerConfig) {
 
 	reader := bufio.NewReader(conn)
 
-	// helper to senda resp command and await a single line response
-	sendAndReceive := func(payload string, desc string) error {
+	sendAndReceive := func(payload string, desc string) (string, error) {
 		if _, err := conn.Write([]byte(payload)); err != nil {
-			return fmt.Errorf("Failed to send %s: %w", desc, err)
+			return "", fmt.Errorf("failed to send %s: %w", desc, err)
 		}
 		resp, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("Failed to read response for %s: %w", desc, err)
+			return "", fmt.Errorf("failed to read response for %s: %w", desc, err)
 		}
-		_ = resp
-		return nil
+		return resp, nil
 	}
 
-	// 1. send PING as RESP array
-	pingCommand := "*1\r\n$4\r\nPING\r\n"
-	if err := sendAndReceive(pingCommand, "PING"); err != nil {
-		fmt.Printf("Failed to send PING to master: %s\n", err.Error())
+	// 1. PING
+	if _, err := sendAndReceive("*1\r\n$4\r\nPING\r\n", "PING"); err != nil {
+		fmt.Println(err.Error())
 		conn.Close()
 		return
 	}
 
-	// 2. Send REPLCONF listening-port <PORT>
+	// 2. REPLCONF listening-port <PORT>
 	portStr := strconv.Itoa(config.Port)
 	replconfPortCmd := fmt.Sprintf(
 		"*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$%d\r\n%s\r\n",
 		len(portStr),
 		portStr,
 	)
-	if err := sendAndReceive(replconfPortCmd, "REPLCONF listening-port"); err != nil {
+	if _, err := sendAndReceive(replconfPortCmd, "REPLCONF listening-port"); err != nil {
 		fmt.Println(err.Error())
 		conn.Close()
 		return
 	}
 
-	// 3. Send REPLCONF capa psync2
+	// 3. REPLCONF capa psync2
 	replconfCapaCmd := "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"
-	if err := sendAndReceive(replconfCapaCmd, "REPLCONF capa psync2"); err != nil {
+	if _, err := sendAndReceive(replconfCapaCmd, "REPLCONF capa psync2"); err != nil {
 		fmt.Println(err.Error())
 		conn.Close()
 		return
 	}
 
-	// 4. send PSYNC ? -1
+	// 4. PSYNC ? -1
 	psyncCmd := "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
-	if err := sendAndReceive(psyncCmd, "PSYNC ?-1"); err != nil {
+	psyncResp, err := sendAndReceive(psyncCmd, "PSYNC ? -1")
+	if err != nil {
 		fmt.Println(err.Error())
 		conn.Close()
 		return
 	}
 
+	// If master answers with FULLRESYNC, consume the incoming RDB file
+	if strings.HasPrefix(psyncResp, "+FULLRESYNC") {
+		// Read RDB header: $<length>\r\n
+		rdbHeader, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println("Failed to read RDB header:", err.Error())
+			conn.Close()
+			return
+		}
+
+		rdbHeader = strings.TrimSuffix(rdbHeader, "\r\n")
+		rdbHeader = strings.TrimSuffix(rdbHeader, "\n")
+		if strings.HasPrefix(rdbHeader, "$") {
+			rdbLen, err := strconv.Atoi(rdbHeader[1:])
+			if err == nil && rdbLen > 0 {
+				rdbBuf := make([]byte, rdbLen)
+				if _, err := io.ReadFull(reader, rdbBuf); err != nil {
+					fmt.Println("Failed to read RDB binary content:", err.Error())
+					conn.Close()
+					return
+				}
+			}
+		}
+	}
+
+	// Master connection will remain open for command propagation in upcoming stages
 }
