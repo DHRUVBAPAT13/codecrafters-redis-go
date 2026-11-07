@@ -19,52 +19,47 @@ type AOFManager struct {
 
 var aofManager = &AOFManager{}
 
-// InitAOF sets up directory, discovers the active incremental file from the manifest, and opens it
+// InitAOF sets up directory, discovers the active incremental file from the manifest, and opens it.
 func InitAOF(config ServerConfig) error {
-
 	if strings.ToLower(config.AppendOnly) != "yes" {
 		return nil
 	}
 
-	aofDir := filepath.Join(config.Dir, config.AppendFileName)
+	aofDir := filepath.Join(config.Dir, config.AppendDirName)
 	if err := os.MkdirAll(aofDir, 0755); err != nil {
-		return fmt.Errorf("failed to create AOF directory: %w", err)
+		return fmt.Errorf("failed to create AOF dir: %w", err)
 	}
 
 	manifestPath := filepath.Join(aofDir, fmt.Sprintf("%s.manifest", config.AppendFileName))
 	activeIncrFile := ""
 
-	// chek if manifest already exists (e.g. provided by master)
-	if data, err := os.ReadFile(manifestPath); err != nil {
-
+	// 1. Read existing manifest if present
+	if data, err := os.ReadFile(manifestPath); err == nil {
 		scanner := bufio.NewScanner(strings.NewReader(string(data)))
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			parts := strings.Fields(line)
-
-			// format: file <filename> seq <seq> type <type>
-			if len(parts) >= 6 && parts[0] == "file" && parts[4] == "type" {
+			// Format: file <filename> seq <seq> type <type>
+			if len(parts) >= 6 && parts[0] == "file" && parts[4] == "type" && parts[5] == "i" {
 				activeIncrFile = parts[1]
 				break
 			}
 		}
 	}
 
-	// if no manifest or no incremental file entry found, create defaults
+	// 2. If no manifest or no incremental entry found, create defaults
 	if activeIncrFile == "" {
 		activeIncrFile = fmt.Sprintf("%s.1.incr.aof", config.AppendFileName)
 		manifestContent := fmt.Sprintf("file %s seq 1 type i\n", activeIncrFile)
-
-		if err := os.WriteFile(manifestPath, []byte(manifestContent), 0644); err != nil {
-			return fmt.Errorf("failed to write AOF mainfest: %w", err)
-		}
+		_ = os.WriteFile(manifestPath, []byte(manifestContent), 0644)
 	}
 
 	activeFilePath := filepath.Join(aofDir, activeIncrFile)
-	f, err := os.OpenFile(activeFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
+	// 3. Open with os.O_CREATE to guarantee file exists on disk
+	f, err := os.OpenFile(activeFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open AOF file %s: %w", activeFilePath, err)
+		return fmt.Errorf("failed to open/create AOF file %s: %w", activeFilePath, err)
 	}
 
 	aofManager.mu.Lock()
@@ -75,11 +70,10 @@ func InitAOF(config ServerConfig) error {
 	aofManager.mu.Unlock()
 
 	return nil
-
 }
 
+// AppendCommand writes raw RESP command bytes and flushes if required
 func (a *AOFManager) AppendCommand(rawCommand []byte) error {
-
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -91,7 +85,7 @@ func (a *AOFManager) AppendCommand(rawCommand []byte) error {
 		return err
 	}
 
-	if a.appendFsync == "yes" {
+	if a.appendFsync == "always" {
 		return a.file.Sync()
 	}
 

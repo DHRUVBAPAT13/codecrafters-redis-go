@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/base64"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -189,52 +188,59 @@ func (r *ReplicaRegistry) WaitForReplicas(numReplicas int, timeoutMs int) int {
 }
 
 func ParseServerConfig() ServerConfig {
-	port := flag.Int("port", 6379, "Port to listen on")
-	replicaOf := flag.String("replicaof", "", "Master host and port to replicate")
-	dirFlag := flag.String("dir", "", "Directory where RDB file is stored")
-	dbFileName := flag.String("dbfilename", "", "Name of the RDB file")
-	appendOnly := flag.String("appendonly", "no", "Enable/disable AOF persistence")
-	appendDirName := flag.String("appenddirname", "appendonlydir", "Directory where AOF files are stored")
-	appendFileName := flag.String("appendfilename", "appendonly.aof", "Name of the AOF file")
-	appendFsync := flag.String("appendfsync", "everysec", "Fsync policy for AOF")
-	flag.Parse()
+	getArgVal := func(flagName string, defaultVal string) string {
+		for i := 1; i < len(os.Args); i++ {
+			arg := os.Args[i]
+			// Matches --flag=val or -flag=val
+			prefix1 := "--" + flagName + "="
+			prefix2 := "-" + flagName + "="
+			if strings.HasPrefix(arg, prefix1) {
+				return arg[len(prefix1):]
+			}
+			if strings.HasPrefix(arg, prefix2) {
+				return arg[len(prefix2):]
+			}
 
-	baseDir := *dirFlag
-	if baseDir == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			baseDir = cwd
+			// Matches --flag val or -flag val
+			if (arg == "--"+flagName || arg == "-"+flagName) && i+1 < len(os.Args) {
+				return os.Args[i+1]
+			}
+
+			// Matches --flagval (if attached directly)
+			prefix3 := "--" + flagName
+			if strings.HasPrefix(arg, prefix3) && len(arg) > len(prefix3) && arg[len(prefix3)] != '-' {
+				return arg[len(prefix3):]
+			}
 		}
+		return defaultVal
+	}
+
+	portStr := getArgVal("port", "6379")
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		port = 6379
+	}
+
+	cwd, _ := os.Getwd()
+	dirVal := getArgVal("dir", cwd)
+	if dirVal == "" {
+		dirVal = cwd
 	}
 
 	config := ServerConfig{
-		Port:             *port,
+		Port:             port,
 		Role:             "master",
 		MasterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
 		MasterReplOffset: 0,
-		Dir:              baseDir,
-		DBFileName:       *dbFileName,
-		AppendOnly:       *appendOnly,
-		AppendDirName:    *appendDirName,
-		AppendFileName:   *appendFileName,
-		AppendFsync:      *appendFsync,
+		Dir:              dirVal,
+		DBFileName:       getArgVal("dbfilename", "dump.rdb"),
+		AppendOnly:       getArgVal("appendonly", "no"),
+		AppendDirName:    getArgVal("appenddirname", "appendonlydir"),
+		AppendFileName:   getArgVal("appendfilename", "appendonly.aof"),
+		AppendFsync:      getArgVal("appendfsync", "everysec"),
 	}
 
-	var replicaArg string
-	if *replicaOf != "" {
-		replicaArg = *replicaOf
-	} else {
-		for i, arg := range os.Args {
-			if (arg == "--replicaof" || arg == "-replicaof") && i+1 < len(os.Args) {
-				if i+2 < len(os.Args) && !strings.HasPrefix(os.Args[i+1], "-") && !strings.HasPrefix(os.Args[i+2], "-") {
-					replicaArg = os.Args[i+1] + " " + os.Args[i+2]
-				} else {
-					replicaArg = os.Args[i+1]
-				}
-				break
-			}
-		}
-	}
-
+	replicaArg := getArgVal("replicaof", "")
 	if replicaArg != "" {
 		parts := strings.Fields(replicaArg)
 		if len(parts) >= 2 {
