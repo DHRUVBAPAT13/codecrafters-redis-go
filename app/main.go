@@ -259,6 +259,18 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		case "dbfilename":
 			val = config.DBFileName
 
+		case "appendonly":
+			val = config.AppendOnly
+
+		case "appenddirname":
+			val = config.AppendDirName
+
+		case "appendfilename":
+			val = config.AppendFileName
+
+		case "appendfsync":
+			val = config.AppendFsync
+
 		default:
 			// if unknown parameter, Redis returns an empty array
 			return []byte("*0\r\n")

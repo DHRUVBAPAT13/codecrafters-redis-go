@@ -27,6 +27,10 @@ type ServerConfig struct {
 	MasterReplOffset int
 	Dir              string
 	DBFileName       string
+	AppendOnly       string
+	AppendDirName    string
+	AppendFileName   string
+	AppendFsync      string
 }
 
 type ReplicaConnection struct {
@@ -187,17 +191,28 @@ func (r *ReplicaRegistry) WaitForReplicas(numReplicas int, timeoutMs int) int {
 func ParseServerConfig() ServerConfig {
 	port := flag.Int("port", 6379, "Port to listen on")
 	replicaOf := flag.String("replicaof", "", "Master host and port to replicate")
-	dir := flag.String("dir", "", "Directory where RDB file is stored")
+	dirFlag := flag.String("dir", "", "Directory where RDB file is stored")
 	dbFileName := flag.String("dbfilename", "", "Name of the RDB file")
 	flag.Parse()
+
+	baseDir := *dirFlag
+	if baseDir == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			baseDir = cwd
+		}
+	}
 
 	config := ServerConfig{
 		Port:             *port,
 		Role:             "master",
 		MasterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
 		MasterReplOffset: 0,
-		Dir:              *dir,
+		Dir:              baseDir,
 		DBFileName:       *dbFileName,
+		AppendOnly:       "no",
+		AppendDirName:    "appendonlydir",
+		AppendFileName:   "appendonly.aof",
+		AppendFsync:      "everysec",
 	}
 
 	var replicaArg string
