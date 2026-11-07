@@ -521,10 +521,12 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			continue
 
 		case "PSYNC":
-			if err := HandleMasterPSYNC(conn, config); err != nil {
-				fmt.Println("Error handling PSYNC", err.Error())
+			if err := HandleMasterPSYNC(conn, reader, config); err != nil {
+				fmt.Println("Error handling PSYNC:", err.Error())
 			}
-			continue
+			// Connection is now fully transferred to the replication listener.
+			// Return here so handleClient does not compete for incoming ACK bytes!
+			return
 
 		case "BLPOP":
 			handleBLPOP(conn, store, args)

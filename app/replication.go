@@ -29,8 +29,9 @@ type ServerConfig struct {
 
 type ReplicaConnection struct {
 	conn       net.Conn
-	reader     *bufio.Reader
-	offsetChan chan int
+	mu         sync.Mutex
+	lastAckOff int
+	notify     chan struct{}
 }
 
 type ReplicaRegistry struct {
@@ -44,31 +45,39 @@ var replicaRegistry = &ReplicaRegistry{
 	masterOffset: 0,
 }
 
-func (r *ReplicaRegistry) Register(conn net.Conn) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+func (r *ReplicaRegistry) RegisterReplica(conn net.Conn, reader *bufio.Reader) {
 	rep := &ReplicaConnection{
 		conn:       conn,
-		reader:     bufio.NewReader(conn),
-		offsetChan: make(chan int, 100),
+		lastAckOff: 0,
+		notify:     make(chan struct{}, 1),
 	}
-	r.replicas = append(r.replicas, rep)
 
-	// Goroutine listening for incoming responses (like REPLCONF ACK <offset>) from this replica
-	go func(rc *ReplicaConnection) {
+	r.mu.Lock()
+	r.replicas = append(r.replicas, rep)
+	r.mu.Unlock()
+
+	// Dedicated reader loop for this replica connection on the master
+	go func() {
+		defer conn.Close()
 		for {
-			args, _, err := readRESPArrayWithBytes(rc.reader)
+			args, _, err := readRESPArrayWithBytes(reader)
 			if err != nil {
 				return
 			}
 			if len(args) >= 3 && strings.ToUpper(args[0]) == "REPLCONF" && strings.ToUpper(args[1]) == "ACK" {
 				if off, err := strconv.Atoi(args[2]); err == nil {
-					rc.offsetChan <- off
+					rep.mu.Lock()
+					rep.lastAckOff = off
+					rep.mu.Unlock()
+
+					select {
+					case rep.notify <- struct{}{}:
+					default:
+					}
 				}
 			}
 		}
-	}(rep)
+	}()
 }
 
 func (r *ReplicaRegistry) Count() int {
@@ -101,67 +110,76 @@ func (r *ReplicaRegistry) Propagate(rawCommand []byte) {
 	r.replicas = active
 }
 
-// WaitForReplicas queries all replicas using REPLCONF GETACK * and awaits target offset ACKs
 func (r *ReplicaRegistry) WaitForReplicas(numReplicas int, timeoutMs int) int {
 	r.mu.Lock()
-	totalReplicas := len(r.replicas)
-	targetOffset := r.masterOffset
-	replicasCopy := append([]*ReplicaConnection(nil), r.replicas...)
+	total := len(r.replicas)
+	target := r.masterOffset
+	reps := append([]*ReplicaConnection(nil), r.replicas...)
 	r.mu.Unlock()
 
-	// If no replicas exist, return 0 immediately
-	if totalReplicas == 0 {
+	if total == 0 {
 		return 0
 	}
 
-	// If no write commands have been propagated, all connected replicas are fully in sync
-	if targetOffset == 0 {
-		return totalReplicas
+	// If no writes have been propagated, all replicas are considered in sync
+	if target == 0 {
+		return total
 	}
 
-	// Send REPLCONF GETACK * to all replicas
+	// Check how many replicas are ALREADY at target offset
+	currentAcks := 0
+	for _, rep := range reps {
+		rep.mu.Lock()
+		if rep.lastAckOff >= target {
+			currentAcks++
+		}
+		rep.mu.Unlock()
+	}
+
+	if currentAcks >= numReplicas {
+		return currentAcks
+	}
+
+	// Request ACKs from replicas
 	getAckCmd := "*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n"
-	for _, rep := range replicasCopy {
+	for _, rep := range reps {
 		_, _ = rep.conn.Write([]byte(getAckCmd))
 	}
 
-	ackCount := 0
-	var ackMu sync.Mutex
-	done := make(chan struct{})
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
 
-	// Collect ACKs concurrently from all replica channels
-	for _, rep := range replicasCopy {
-		go func(rc *ReplicaConnection) {
-			select {
-			case off := <-rc.offsetChan:
-				if off >= targetOffset {
-					ackMu.Lock()
-					ackCount++
-					if ackCount >= numReplicas {
-						select {
-						case done <- struct{}{}:
-						default:
-						}
-					}
-					ackMu.Unlock()
-				}
-			case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
-				return
+	for {
+		timeLeft := time.Until(deadline)
+		if timeLeft <= 0 {
+			break
+		}
+
+		// Re-count ACKs
+		count := 0
+		for _, rep := range reps {
+			rep.mu.Lock()
+			if rep.lastAckOff >= target {
+				count++
 			}
-		}(rep)
+			rep.mu.Unlock()
+		}
+
+		if count >= numReplicas {
+			return count
+		}
+
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	timer := time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
-	defer timer.Stop()
-
-	select {
-	case <-done:
-	case <-timer.C:
+	finalCount := 0
+	for _, rep := range reps {
+		rep.mu.Lock()
+		if rep.lastAckOff >= target {
+			finalCount++
+		}
+		rep.mu.Unlock()
 	}
-
-	ackMu.Lock()
-	defer ackMu.Unlock()
-	return ackCount
+	return finalCount
 }
 
 func ParseServerConfig() ServerConfig {
@@ -232,7 +250,7 @@ func EncodeRESPArray(args []string) []byte {
 	return []byte(sb.String())
 }
 
-func HandleMasterPSYNC(conn net.Conn, config ServerConfig) error {
+func HandleMasterPSYNC(conn net.Conn, reader *bufio.Reader, config ServerConfig) error {
 	fullResyncResp := fmt.Sprintf("+FULLRESYNC %s 0\r\n", config.MasterReplID)
 	if _, err := conn.Write([]byte(fullResyncResp)); err != nil {
 		return err
@@ -250,7 +268,8 @@ func HandleMasterPSYNC(conn net.Conn, config ServerConfig) error {
 		return err
 	}
 
-	replicaRegistry.Register(conn)
+	// Register with the existing reader so no bytes are lost or contested
+	replicaRegistry.RegisterReplica(conn, reader)
 	return nil
 }
 
