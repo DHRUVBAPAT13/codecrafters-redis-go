@@ -420,9 +420,14 @@ func handleXREAD(conn net.Conn, store *Store, args []string) {
 }
 
 func handleClient(conn net.Conn, store *Store, config ServerConfig) {
-	defer conn.Close()
-	reader := bufio.NewReader(conn)
+	isReplica := false
+	defer func() {
+		if !isReplica {
+			conn.Close()
+		}
+	}()
 
+	reader := bufio.NewReader(conn)
 	txState := NewClientTxState()
 
 	for {
@@ -442,9 +447,6 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 		cmd := strings.ToUpper(args[0])
 
 		// 1. Transaction Interceptor:
-		// Commands inside MULTI get queued except transaction control commands (EXEC, DISCARD)
-		// and commands explicitly forbidden inside MULTI (MULTI, WATCH)
-
 		if txState.InTx {
 			switch cmd {
 			case "MULTI":
@@ -456,7 +458,7 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 				continue
 
 			case "EXEC", "DISCARD":
-				// fall through to switch statements below
+				// fall through to execution below
 
 			default:
 				txState.Queue = append(txState.Queue, args)
@@ -486,7 +488,6 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 				continue
 			}
 
-			// if any watched key was modified, abort transaction
 			if txState.IsDirty() {
 				txState.Reset()
 				_, _ = conn.Write([]byte("*-1\r\n"))
@@ -523,9 +524,10 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 		case "PSYNC":
 			if err := HandleMasterPSYNC(conn, reader, config); err != nil {
 				fmt.Println("Error handling PSYNC:", err.Error())
+				return
 			}
-			// Connection is now fully transferred to the replication listener.
-			// Return here so handleClient does not compete for incoming ACK bytes!
+			// Mark as replica so defer does not close this socket!
+			isReplica = true
 			return
 
 		case "BLPOP":
@@ -535,7 +537,6 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 		case "XREAD":
 			handleXREAD(conn, store, args)
 			continue
-
 		}
 
 		out := executeCommand(args, store, config)
