@@ -193,6 +193,10 @@ func ParseServerConfig() ServerConfig {
 	replicaOf := flag.String("replicaof", "", "Master host and port to replicate")
 	dirFlag := flag.String("dir", "", "Directory where RDB file is stored")
 	dbFileName := flag.String("dbfilename", "", "Name of the RDB file")
+	appendOnly := flag.String("appendonly", "no", "Enable/disable AOF persistence")
+	appendDirName := flag.String("appenddirname", "appendonlydir", "Directory where AOF files are stored")
+	appendFileName := flag.String("appendfilename", "appendonly.aof", "Name of the AOF file")
+	appendFsync := flag.String("appendfsync", "everysec", "Fsync policy for AOF")
 	flag.Parse()
 
 	baseDir := *dirFlag
@@ -209,10 +213,10 @@ func ParseServerConfig() ServerConfig {
 		MasterReplOffset: 0,
 		Dir:              baseDir,
 		DBFileName:       *dbFileName,
-		AppendOnly:       "no",
-		AppendDirName:    "appendonlydir",
-		AppendFileName:   "appendonly.aof",
-		AppendFsync:      "everysec",
+		AppendOnly:       *appendOnly,
+		AppendDirName:    *appendDirName,
+		AppendFileName:   *appendFileName,
+		AppendFsync:      *appendFsync,
 	}
 
 	var replicaArg string
