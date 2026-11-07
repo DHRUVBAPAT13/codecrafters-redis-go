@@ -609,7 +609,7 @@ func main() {
 	store := NewStore()
 
 	// initialize AOF persistence if enabled
-	if err := InitAOF(config); err != nil {
+	if err := InitAOF(config, store); err != nil {
 		fmt.Printf("AOF init error: %s\n", err.Error())
 		os.Exit(1)
 	}

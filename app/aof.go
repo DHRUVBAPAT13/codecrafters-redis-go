@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,8 +21,40 @@ type AOFManager struct {
 
 var aofManager = &AOFManager{}
 
+// replayAOFFile parses and executes all RESP commands in the incremental AOF file
+func replayAOFFile(path string, store *Store) error {
+
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	for {
+		args, err := readRESPArray(reader)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+
+		if len(args) == 0 {
+			continue
+		}
+
+		// replay all commands on store without re-appending to AOF or propagating to replica
+		executeCommandForReplay(args, store)
+	}
+
+	return nil
+
+}
+
 // InitAOF sets up directory, discovers the active incremental file from the manifest, and opens it.
-func InitAOF(config ServerConfig) error {
+func InitAOF(config ServerConfig, store *Store) error {
 	if strings.ToLower(config.AppendOnly) != "yes" {
 		return nil
 	}
@@ -56,7 +90,15 @@ func InitAOF(config ServerConfig) error {
 
 	activeFilePath := filepath.Join(aofDir, activeIncrFile)
 
-	// 3. Open with os.O_CREATE to guarantee file exists on disk
+	// 3. replay existing commands if file already exists
+	if _, err := os.Stat(activeFilePath); err != nil {
+
+		if err := replayAOFFile(activeFilePath, store); err != nil {
+			fmt.Printf("AOF replay warning on %s: %s\n", activeFilePath, err.Error())
+		}
+	}
+
+	// 4. Open with os.O_CREATE|os.O_WRONLY|os.O_APPEND for incoming client commands
 	f, err := os.OpenFile(activeFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open/create AOF file %s: %w", activeFilePath, err)
@@ -90,4 +132,22 @@ func (a *AOFManager) AppendCommand(rawCommand []byte) error {
 	}
 
 	return nil
+}
+
+// executeCommandForReplay handles commands like SET during recovery without side effects
+func executeCommandForReplay(args []string, store *Store) {
+
+	if len(args) == 0 {
+		return
+	}
+
+	cmd := strings.ToUpper(args[0])
+	switch cmd {
+	case "SET":
+		if len(args) >= 3 {
+			key := args[1]
+			val := args[2]
+			store.Set(key, val, 0)
+		}
+	}
 }
