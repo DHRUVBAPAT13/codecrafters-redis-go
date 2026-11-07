@@ -119,3 +119,19 @@ func (s *Store) Incr(key string) (int64, error) {
 
 	return val, nil
 }
+
+func (s *Store) Keys() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	keys := make([]string, 0, len(s.data))
+	now := time.Now()
+
+	for k, item := range s.data {
+		if !item.expiresAt.IsZero() && now.After(item.expiresAt) {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	return keys
+}

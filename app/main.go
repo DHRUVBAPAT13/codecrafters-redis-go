@@ -267,6 +267,24 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		// Return a 2-element RESP Array: [param, val]
 		return fmt.Appendf(nil, "*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(param), param, len(val), val)
 
+	case "KEYS":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'keys' command\r\n")
+		}
+
+		pattern := args[1]
+		var matchedKeys []string
+		if pattern == "*" {
+			matchedKeys = store.Keys()
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("*%d\r\n", len(matchedKeys)))
+		for _, k := range matchedKeys {
+			sb.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(k), k))
+		}
+		return []byte(sb.String())
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
@@ -570,19 +588,21 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 }
 
 func main() {
-
 	config := ParseServerConfig()
 	store := NewStore()
 
-	// if running as replica, start the replication handshake with master
+	// Load RDB snapshot into store if present
+	if err := LoadRDB(config.Dir, config.DBFileName, store); err != nil {
+		fmt.Println("Error loading RDB file:", err.Error())
+	}
+
 	if config.Role == "slave" {
 		go StartReplicationHandshake(config, store)
-
 	}
 
 	l, err := net.Listen("tcp", config.Address())
 	if err != nil {
-		fmt.Printf("Failed to bind to port %d: %s", config.Port, err.Error())
+		fmt.Printf("Failed to bind to port %d: %s\n", config.Port, err.Error())
 		os.Exit(1)
 	}
 	defer l.Close()
