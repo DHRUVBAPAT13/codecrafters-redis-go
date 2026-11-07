@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type AOFManager struct {
@@ -23,17 +25,17 @@ var aofManager = &AOFManager{}
 
 // replayAOFFile parses and executes all RESP commands in the incremental AOF file
 func replayAOFFile(path string, store *Store) error {
-
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-
 	defer file.Close()
 
 	reader := bufio.NewReader(file)
+
 	for {
-		args, _, err := readRESPArrayWithBytes(reader)
+		// Read array header: *<count>
+		line, err := reader.ReadString('\n')
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -41,16 +43,60 @@ func replayAOFFile(path string, store *Store) error {
 			return err
 		}
 
-		if len(args) == 0 {
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
 			continue
 		}
 
-		// replay all commands on store without re-appending to AOF or propagating to replica
-		executeCommandForReplay(args, store)
+		if !strings.HasPrefix(line, "*") {
+			continue
+		}
+
+		numArgs, err := strconv.Atoi(line[1:])
+		if err != nil {
+			return err
+		}
+
+		args := make([]string, 0, numArgs)
+		for i := 0; i < numArgs; i++ {
+			// Read bulk string header: $<len>
+			lenLine, err := reader.ReadString('\n')
+			if err != nil {
+				return err
+			}
+			lenLine = strings.TrimRight(lenLine, "\r\n")
+			if !strings.HasPrefix(lenLine, "$") {
+				return fmt.Errorf("expected $, got %q", lenLine)
+			}
+
+			strLen, err := strconv.Atoi(lenLine[1:])
+			if err != nil {
+				return err
+			}
+
+			// Read exact bytes of the bulk string
+			buf := make([]byte, strLen)
+			if _, err := io.ReadFull(reader, buf); err != nil {
+				return err
+			}
+			args = append(args, string(buf))
+
+			// Discard the trailing newline (\r\n or \n)
+			discardByte, err := reader.ReadByte()
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+			if discardByte == '\r' {
+				_, _ = reader.ReadByte() // Consume the \n after \r
+			}
+		}
+
+		if len(args) > 0 {
+			executeCommandForReplay(args, store)
+		}
 	}
 
 	return nil
-
 }
 
 // InitAOF sets up directory, discovers the active incremental file from the manifest, and opens it.
@@ -136,18 +182,26 @@ func (a *AOFManager) AppendCommand(rawCommand []byte) error {
 
 // executeCommandForReplay handles commands like SET during recovery without side effects
 func executeCommandForReplay(args []string, store *Store) {
-
 	if len(args) == 0 {
 		return
 	}
-
 	cmd := strings.ToUpper(args[0])
 	switch cmd {
 	case "SET":
 		if len(args) >= 3 {
 			key := args[1]
 			val := args[2]
-			store.Set(key, val, 0)
+
+			var expiry time.Duration
+			for i := 3; i < len(args); i++ {
+				if strings.ToUpper(args[i]) == "PX" && i+1 < len(args) {
+					if ms, err := strconv.ParseInt(args[i+1], 10, 64); err == nil {
+						expiry = time.Duration(ms) * time.Millisecond
+					}
+					i++
+				}
+			}
+			store.Set(key, val, expiry)
 		}
 	}
 }

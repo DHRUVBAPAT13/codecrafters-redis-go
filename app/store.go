@@ -60,10 +60,8 @@ func (s *Store) Get(key string) (string, bool) {
 		return "", false
 	}
 
-	if item.isExpired() {
-		s.mu.Lock()
-		delete(s.data, key)
-		s.mu.Unlock()
+	// Only expire if expiresAt was actually set!
+	if !item.expiresAt.IsZero() && time.Now().After(item.expiresAt) {
 		return "", false
 	}
 
