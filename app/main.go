@@ -613,13 +613,23 @@ func main() {
 			os.Exit(1)
 		}
 
-		aofFilePath := filepath.Join(aofDir, fmt.Sprintf("%s.1.incr.aof", config.AppendFileName))
+		incrFileName := fmt.Sprintf("%s.1.incr.aof", config.AppendFileName)
+		aofFilePath := filepath.Join(aofDir, incrFileName)
 		file, err := os.OpenFile(aofFilePath, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			fmt.Printf("Failed to create AOF file %s: %s\n", aofFilePath, err.Error())
 			os.Exit(1)
 		}
 		file.Close()
+
+		mainfestFileName := fmt.Sprintf("%s.manifest", config.AppendFileName)
+		mainfestFilePath := filepath.Join(aofDir, mainfestFileName)
+		manifestContent := fmt.Sprintf("file %s seq 1 type i\n", incrFileName)
+
+		if err := os.WriteFile(mainfestFilePath, []byte(manifestContent), 0644); err != nil {
+			fmt.Printf("Failed to create AOF manifest file %s: %s", mainfestFilePath, err.Error())
+			os.Exit(1)
+		}
 
 	}
 
