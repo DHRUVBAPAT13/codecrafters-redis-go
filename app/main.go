@@ -210,9 +210,11 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		var resp strings.Builder
 		resp.WriteString(fmt.Sprintf("*%d\r\n", len(entries)))
 		for _, entry := range entries {
+
 			resp.WriteString("*2\r\n")
 			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(entry.ID), entry.ID))
 			resp.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
+
 			for _, f := range entry.Fields {
 				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Key), f.Key))
 				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f.Value), f.Value))
@@ -231,8 +233,15 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			return []byte("ERR wrong number of arguments for 'wait' command\r\n")
 		}
 
+		numReplicas, err1 := strconv.Atoi(args[1])
+		timeoutMs, err2 := strconv.Atoi(args[2])
+
+		if err1 != nil || err2 != nil {
+			return []byte("-ERR value is not an integer or out of range\r\n")
+		}
+
 		// when no replicas are connected or waiting for 0 replicas, return the connected count immediately
-		count := replicaRegistry.Count()
+		count := replicaRegistry.WaitForReplicas(numReplicas, timeoutMs)
 		return fmt.Appendf(nil, ":%d\r\n", count)
 
 	default:
