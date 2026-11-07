@@ -137,7 +137,7 @@ func InitAOF(config ServerConfig, store *Store) error {
 	activeFilePath := filepath.Join(aofDir, activeIncrFile)
 
 	// 3. replay existing commands if file already exists
-	if _, err := os.Stat(activeFilePath); err != nil {
+	if _, err := os.Stat(activeFilePath); err == nil {
 
 		if err := replayAOFFile(activeFilePath, store); err != nil {
 			fmt.Printf("AOF replay warning on %s: %s\n", activeFilePath, err.Error())
