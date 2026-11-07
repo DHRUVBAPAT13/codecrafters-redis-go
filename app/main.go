@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -602,6 +603,16 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 func main() {
 	config := ParseServerConfig()
 	store := NewStore()
+
+	// if AOF persistence is enabled, create appendonly directory
+	if strings.ToLower(config.AppendOnly) == "yes" {
+		aofDir := filepath.Join(config.Dir, config.AppendDirName)
+
+		if err := os.MkdirAll(aofDir, 0755); err != nil {
+			fmt.Printf("Failed to create AOF directory %s: %s\n", aofDir, err.Error())
+			os.Exit(1)
+		}
+	}
 
 	// Load RDB snapshot into store if present
 	if err := LoadRDB(config.Dir, config.DBFileName, store); err != nil {
