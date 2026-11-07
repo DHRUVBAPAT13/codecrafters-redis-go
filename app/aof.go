@@ -33,7 +33,7 @@ func replayAOFFile(path string, store *Store) error {
 
 	reader := bufio.NewReader(file)
 	for {
-		args, err := readRESPArray(reader)
+		args, _, err := readRESPArrayWithBytes(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
