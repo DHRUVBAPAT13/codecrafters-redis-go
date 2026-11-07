@@ -509,7 +509,17 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 		// only specific pub/sub management commands, PING, QUIT, and RESET are permitted.
 		if len(txState.SubscribedChannels) > 0 {
 			switch cmd {
-			case "SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "PING", "QUIT", "RESET":
+			case "PING":
+				// If optional message argument provided (e.g., PING message), Redis echoes that message in index 2.
+				// By default, it returns ["pong", ""]
+				msg := ""
+				if len(args) > 1 {
+					msg = args[1]
+				}
+				resp := fmt.Sprintf("*2\r\n$4\r\npong\r\n$%d\r\n%s\r\n", len(msg), msg)
+				_, _ = conn.Write([]byte(resp))
+				continue
+			case "SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "QUIT", "RESET":
 				// Allowed commands in subscribed mode
 			default:
 				errMsg := fmt.Sprintf("-ERR Can't execute '%s': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n", strings.ToLower(args[0]))
