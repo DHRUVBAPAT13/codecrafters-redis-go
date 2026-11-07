@@ -3,16 +3,18 @@ package main
 import "sync"
 
 type ClientTxState struct {
-	InTx        bool
-	Queue       [][]string
-	WatchedKeys map[string]uint64
+	InTx               bool
+	Queue              [][]string
+	WatchedKeys        map[string]uint64
+	SubscribedChannels map[string]struct{}
 }
 
 func NewClientTxState() *ClientTxState {
 	return &ClientTxState{
-		InTx:        false,
-		Queue:       make([][]string, 0),
-		WatchedKeys: make(map[string]uint64),
+		InTx:               false,
+		Queue:              make([][]string, 0),
+		WatchedKeys:        make(map[string]uint64),
+		SubscribedChannels: make(map[string]struct{}),
 	}
 }
 

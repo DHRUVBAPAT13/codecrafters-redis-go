@@ -302,20 +302,6 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		}
 		return []byte(sb.String())
 
-	case "SUBSCRIBE":
-		if len(args) < 2 {
-			return []byte("-ERR wrong number of arguments for 'subscribe' command\r\n")
-		}
-		var resp strings.Builder
-		for i, channel := range args[1:] {
-			channelCount := i + 1
-			resp.WriteString("*3\r\n")
-			resp.WriteString("$9\r\nsubscribe\r\n")
-			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(channel), channel))
-			resp.WriteString(fmt.Sprintf(":%d\r\n", channelCount))
-		}
-		return []byte(resp.String())
-
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
@@ -608,6 +594,24 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 
 		case "XREAD":
 			handleXREAD(conn, store, args)
+			continue
+
+		case "SUBSCRIBE":
+			if len(args) < 2 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'subscribe' command\r\n"))
+				continue
+			}
+			var resp strings.Builder
+			for _, channel := range args[1:] {
+				txState.SubscribedChannels[channel] = struct{}{}
+				count := len(txState.SubscribedChannels)
+
+				resp.WriteString("*3\r\n")
+				resp.WriteString("$9\r\nsubscribe\r\n")
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(channel), channel))
+				resp.WriteString(fmt.Sprintf(":%d\r\n", count))
+			}
+			_, _ = conn.Write([]byte(resp.String()))
 			continue
 		}
 
