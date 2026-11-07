@@ -612,6 +612,15 @@ func main() {
 			fmt.Printf("Failed to create AOF directory %s: %s\n", aofDir, err.Error())
 			os.Exit(1)
 		}
+
+		aofFilePath := filepath.Join(aofDir, fmt.Sprintf("%s.1.incr.aof", config.AppendFileName))
+		file, err := os.OpenFile(aofFilePath, os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Printf("Failed to create AOF file %s: %s\n", aofFilePath, err.Error())
+			os.Exit(1)
+		}
+		file.Close()
+
 	}
 
 	// Load RDB snapshot into store if present
