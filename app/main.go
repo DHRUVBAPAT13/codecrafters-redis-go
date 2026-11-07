@@ -478,6 +478,7 @@ func handleXREAD(conn net.Conn, store *Store, args []string) {
 }
 
 func handleClient(conn net.Conn, store *Store, config ServerConfig) {
+
 	isReplica := false
 	defer func() {
 		if !isReplica {
@@ -503,6 +504,19 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 		}
 
 		cmd := strings.ToUpper(args[0])
+
+		// Subscribed mode check: if client is subscribed to one or more channels,
+		// only specific pub/sub management commands, PING, QUIT, and RESET are permitted.
+		if len(txState.SubscribedChannels) > 0 {
+			switch cmd {
+			case "SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "PING", "QUIT", "RESET":
+				// Allowed commands in subscribed mode
+			default:
+				errMsg := fmt.Sprintf("-ERR Can't execute '%s': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n", strings.ToLower(args[0]))
+				_, _ = conn.Write([]byte(errMsg))
+				continue
+			}
+		}
 
 		// 1. Transaction Interceptor:
 		if txState.InTx {
