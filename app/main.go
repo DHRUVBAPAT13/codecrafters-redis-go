@@ -302,6 +302,20 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		}
 		return []byte(sb.String())
 
+	case "SUBSCRIBE":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'subscribe' command\r\n")
+		}
+		var resp strings.Builder
+		for i, channel := range args[1:] {
+			channelCount := i + 1
+			resp.WriteString("*3\r\n")
+			resp.WriteString("$9\r\nsubscribe\r\n")
+			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(channel), channel))
+			resp.WriteString(fmt.Sprintf(":%d\r\n", channelCount))
+		}
+		return []byte(resp.String())
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
