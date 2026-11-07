@@ -244,6 +244,29 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		count := replicaRegistry.WaitForReplicas(numReplicas, timeoutMs)
 		return fmt.Appendf(nil, ":%d\r\n", count)
 
+	case "CONFIG":
+		if len(args) < 3 || strings.ToUpper(args[1]) != "GET" {
+			return []byte("-ERR syntax error\r\n")
+		}
+
+		param := strings.ToLower(args[2])
+		val := ""
+
+		switch param {
+		case "dir":
+			val = config.Dir
+
+		case "dbfilename":
+			val = config.DBFileName
+
+		default:
+			// if unknown parameter, Redis returns an empty array
+			return []byte("*0\r\n")
+		}
+
+		// Return a 2-element RESP Array: [param, val]
+		return fmt.Appendf(nil, "*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(param), param, len(val), val)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

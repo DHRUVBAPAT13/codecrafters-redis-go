@@ -25,6 +25,8 @@ type ServerConfig struct {
 	MasterPort       int
 	MasterReplID     string
 	MasterReplOffset int
+	Dir              string
+	DBFileName       string
 }
 
 type ReplicaConnection struct {
@@ -185,6 +187,8 @@ func (r *ReplicaRegistry) WaitForReplicas(numReplicas int, timeoutMs int) int {
 func ParseServerConfig() ServerConfig {
 	port := flag.Int("port", 6379, "Port to listen on")
 	replicaOf := flag.String("replicaof", "", "Master host and port to replicate")
+	dir := flag.String("dir", "", "Directory where RDB file is stored")
+	dbFileName := flag.String("dbfilename", "", "Name of the RDB file")
 	flag.Parse()
 
 	config := ServerConfig{
@@ -192,6 +196,8 @@ func ParseServerConfig() ServerConfig {
 		Role:             "master",
 		MasterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
 		MasterReplOffset: 0,
+		Dir:              *dir,
+		DBFileName:       *dbFileName,
 	}
 
 	var replicaArg string
