@@ -385,6 +385,22 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		count := store.ZCard(key)
 		return fmt.Appendf(nil, ":%d\r\n", count)
 
+	case "ZSCORE":
+		if len(args) < 3 {
+			return []byte("-ERR wrong number of arguments for 'zscore' command\r\n")
+		}
+
+		key := args[1]
+		member := args[3]
+
+		score, exists := store.ZScore(key, member)
+		if !exists {
+			return []byte("$-1\r\n")
+		}
+
+		scoreStr := strconv.FormatFloat(score, 'f', -1, 64)
+		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(scoreStr), scoreStr)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

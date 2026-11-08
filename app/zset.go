@@ -319,3 +319,13 @@ func (zs *ZSet) Card() int {
 
 	return zs.sl.length
 }
+
+// Score returns the score of a member in the sorted set, or false if not found
+func (zs *ZSet) Score(member string) (float64, bool) {
+
+	val, exists := zs.dict.Load(member)
+	if !exists {
+		return 0, false
+	}
+	return val.(float64), true
+}
