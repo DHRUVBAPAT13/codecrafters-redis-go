@@ -312,6 +312,31 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		count := pubsubManager.Publish(channel, message)
 		return fmt.Appendf(nil, ":%d\r\n", count)
 
+	case "ZADD":
+		if len(args) < 4 {
+			return []byte("-ERR wrong number of arguments for 'zadd' command\r\n")
+		}
+
+		key := args[1]
+		score, err := strconv.ParseFloat(args[2], 64)
+		if err != nil {
+			return []byte("-ERR value is not a valid float\r\n")
+		}
+		member := args[3]
+
+		added := store.ZAdd(key, score, member)
+		watchManager.TouchKey(key)
+
+		// also append to AOF if enabled
+		rawCmd := EncodeRESPArray(args)
+		_ = aofManager.AppendCommand(rawCmd)
+
+		if config.Role == "master" {
+			replicaRegistry.Propagate(rawCmd)
+		}
+
+		return fmt.Appendf(nil, ":%d\r\n", added)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

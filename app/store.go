@@ -25,6 +25,7 @@ type Store struct {
 	lists   map[string][]string
 	streams map[string]*Stream
 	blocked map[string][]chan string
+	zsets   map[string]*ZSet
 }
 
 func NewStore() *Store {
@@ -33,6 +34,7 @@ func NewStore() *Store {
 		lists:   make(map[string][]string),
 		streams: make(map[string]*Stream),
 		blocked: make(map[string][]chan string),
+		zsets:   make(map[string]*ZSet),
 	}
 }
 
@@ -89,6 +91,10 @@ func (s *Store) Type(key string) string {
 		return "stream"
 	}
 
+	if zs, ok := s.zsets[key]; ok && zs.sl.length > 0 {
+		return "zset"
+	}
+
 	return "none"
 }
 
@@ -132,4 +138,18 @@ func (s *Store) Keys() []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func (s *Store) ZAdd(key string, score float64, member string) int {
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	zs, exists := s.zsets[key]
+	if !exists {
+		zs = NewZSet()
+		s.zsets[key] = zs
+	}
+
+	return zs.Add(score, member)
 }

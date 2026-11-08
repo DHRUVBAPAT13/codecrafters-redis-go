@@ -203,5 +203,14 @@ func executeCommandForReplay(args []string, store *Store) {
 			}
 			store.Set(key, val, expiry)
 		}
+
+	case "ZADD":
+		if len(args) >= 4 {
+			key := args[1]
+			if score, err := strconv.ParseFloat(args[2], 64); err != nil {
+				member := args[3]
+				store.ZAdd(key, score, member)
+			}
+		}
 	}
 }
