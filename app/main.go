@@ -376,6 +376,15 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return []byte(resp.String())
 
+	case "ZCARD":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'zcard' command\r\n")
+		}
+
+		key := args[1]
+		count := store.ZCard(key)
+		return fmt.Appendf(nil, ":%d\r\n", count)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

@@ -179,3 +179,15 @@ func (s *Store) ZRange(key string, start, stop int) []string {
 
 	return zs.Range(start, stop)
 }
+
+func (s *Store) ZCard(key string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	zs, exists := s.zsets[key]
+	if !exists {
+		return 0
+	}
+
+	return zs.Card()
+}

@@ -313,3 +313,9 @@ func (zs *ZSet) Range(start, stop int) []string {
 
 	return results
 }
+
+// Card returns the number of members in the sorted set
+func (zs *ZSet) Card() int {
+
+	return zs.sl.length
+}
