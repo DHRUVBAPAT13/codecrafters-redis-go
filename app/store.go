@@ -166,3 +166,16 @@ func (s *Store) ZRank(key, member string) (int, bool) {
 
 	return zs.Rank(member)
 }
+
+func (s *Store) ZRange(key string, start, stop int) []string {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	zs, exists := s.zsets[key]
+	if !exists {
+		return []string{}
+	}
+
+	return zs.Range(start, stop)
+}

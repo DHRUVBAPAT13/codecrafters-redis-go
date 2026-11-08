@@ -238,3 +238,58 @@ func (zs *ZSet) Rank(member string) (int, bool) {
 
 	return rank1Based - 1, true
 }
+
+// getNodeByRank finds an element by 1-based rank
+func (zsl *zskiplist) getNodeByRank(rank int) *zskiplistNode {
+
+	if rank <= 0 || rank > zsl.length {
+		return nil
+	}
+
+	traversed := 0
+	x := zsl.header
+	for i := zsl.level - 1; i >= 0; i-- {
+		for x.level[i].forward != nil && (traversed+x.level[i].span) <= rank {
+
+			traversed += x.level[i].span
+			x = x.level[i].forward
+		}
+		if traversed >= rank {
+			return x
+		}
+	}
+	return nil
+}
+
+// Range returns members between 0-based indices start and stop (inclusive)
+func (zs *ZSet) Range(start, stop int) []string {
+
+	if zs.sl.length == 0 || start >= zs.sl.length || start > stop {
+		return []string{}
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	if stop >= zs.sl.length {
+		stop = zs.sl.length - 1
+	}
+
+	// 1-based rank for skiplist lookup
+	firstNode := zs.sl.getNodeByRank(start + 1)
+	if firstNode == nil {
+		return []string{}
+	}
+
+	count := stop - start + 1
+	results := make([]string, 0, count)
+
+	curr := firstNode
+	for curr != nil && len(results) < count {
+		results = append(results, curr.member)
+		curr = curr.level[0].forward
+	}
+
+	return results
+}

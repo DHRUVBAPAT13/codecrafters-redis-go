@@ -352,6 +352,30 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return fmt.Appendf(nil, ":%d\r\n", rank)
 
+	case "ZRANGE":
+		if len(args) < 4 {
+			return []byte("-ERR wrong number of arguments for 'zrange' command\r\n")
+		}
+
+		key := args[1]
+		start, err1 := strconv.Atoi(args[2])
+		stop, err2 := strconv.Atoi(args[3])
+
+		if err1 != nil || err2 != nil {
+			return []byte("-ERR value is not an intger or out of range\r\n")
+		}
+
+		members := store.ZRange(key, start, stop)
+
+		var resp strings.Builder
+		resp.WriteString(fmt.Sprintf("*%d\r\n", len(members)))
+
+		for _, m := range members {
+			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(m), m))
+		}
+
+		return []byte(resp.String())
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
