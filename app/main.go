@@ -449,6 +449,20 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return fmt.Appendf(nil, ":%d\r\n", origBit)
 
+	case "GETBIT":
+		if len(args) < 3 {
+			return []byte("-ERR wrong number of arguments for 'getbit' command\r\n")
+		}
+
+		key := args[1]
+		offset, err := strconv.Atoi(args[2])
+		if err != nil || offset < 0 {
+			return []byte("-ERR bit offset is not an integer or out of range\r\n")
+		}
+
+		bit := store.GetBit(key, offset)
+		return fmt.Appendf(nil, ":%d\r\n", bit)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

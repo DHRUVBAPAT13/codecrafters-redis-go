@@ -269,3 +269,28 @@ func (s *Store) SetBit(key string, offset int, bit int) (int, error) {
 
 	return originalBit, nil
 }
+
+func (s *Store) GetBit(key string, offset int) int {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	item, exists := s.data[key]
+	if !exists || item.isExpired() {
+		return 0
+	}
+
+	byteIndex := offset / 8
+	if byteIndex >= len(item.value) {
+		return 0
+	}
+
+	bitOffset := 7 - (offset % 8)
+	mask := byte(1 << bitOffset)
+
+	if (item.value[byteIndex] & mask) != 0 {
+		return 1
+	}
+
+	return 0
+}
