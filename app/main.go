@@ -401,6 +401,23 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		scoreStr := strconv.FormatFloat(score, 'f', -1, 64)
 		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(scoreStr), scoreStr)
 
+	case "ZREM":
+		if len(args) < 3 {
+			return []byte("-ERR wrong arguments for 'zrem' command\r\n")
+		}
+
+		key := args[1]
+		removed := store.ZRem(key, args[2:]...)
+		watchManager.TouchKey(key)
+
+		rawCmd := EncodeRESPArray(args)
+		_ = aofManager.AppendCommand(rawCmd)
+		if config.Role == "master" {
+			replicaRegistry.Propagate(rawCmd)
+		}
+
+		return fmt.Appendf(nil, ":%d\r\n", removed)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

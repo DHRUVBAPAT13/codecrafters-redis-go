@@ -203,3 +203,21 @@ func (s *Store) ZScore(key, member string) (float64, bool) {
 
 	return zs.Score(member)
 }
+
+func (s *Store) ZRem(key string, members ...string) int {
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	zs, exists := s.zsets[key]
+	if !exists {
+		return 0
+	}
+
+	removed := 0
+	for _, member := range members {
+		removed += zs.Rem(member)
+	}
+
+	return removed
+}

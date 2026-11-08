@@ -10,7 +10,7 @@ const (
 	zsetSkipListP        = 0.25
 )
 
-type zskipistLevel struct {
+type zskiplistLevel struct {
 	forward *zskiplistNode
 	span    int
 }
@@ -19,14 +19,14 @@ type zskiplistNode struct {
 	member   string
 	score    float64
 	backward *zskiplistNode
-	level    []zskipistLevel
+	level    []zskiplistLevel
 }
 
 func newZSkipListNode(level int, score float64, member string) *zskiplistNode {
 	return &zskiplistNode{
 		member: member,
 		score:  score,
-		level:  make([]zskipistLevel, level),
+		level:  make([]zskiplistLevel, level),
 	}
 }
 
@@ -328,4 +328,20 @@ func (zs *ZSet) Score(member string) (float64, bool) {
 		return 0, false
 	}
 	return val.(float64), true
+}
+
+// Rem removes a member from the sorted set
+// Returns 1 if removed, 0 if member did not exist
+func (zs *ZSet) Rem(member string) int {
+
+	val, ok := zs.dict.Load(member)
+	if !ok {
+		return 0
+	}
+
+	score := val.(float64)
+	zs.sl.delete(score, member)
+	zs.dict.Delete(member)
+
+	return 1
 }

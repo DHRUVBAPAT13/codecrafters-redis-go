@@ -212,5 +212,10 @@ func executeCommandForReplay(args []string, store *Store) {
 				store.ZAdd(key, score, member)
 			}
 		}
+
+	case "ZREM":
+		if len(args) >= 3 {
+			store.ZRem(args[1], args[2:]...)
+		}
 	}
 }
