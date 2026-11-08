@@ -302,6 +302,15 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		}
 		return []byte(sb.String())
 
+	case "PUBLISH":
+		if len(args) < 3 {
+			return []byte("-ERR worng number of arguments for 'publish' command\r\n")
+		}
+
+		channel := args[1]
+		count := pubsubManager.SubscriberCount(channel)
+		return fmt.Appendf(nil, ":%d\r\n", count)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
@@ -481,6 +490,8 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 
 	isReplica := false
 	defer func() {
+		// clean up any channel subscriptions for this connection
+		pubsubManager.UnsubscribeAll(conn)
 		if !isReplica {
 			conn.Close()
 		}
@@ -628,8 +639,9 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			var resp strings.Builder
 			for _, channel := range args[1:] {
 				txState.SubscribedChannels[channel] = struct{}{}
-				count := len(txState.SubscribedChannels)
+				pubsubManager.Subscribe(channel, conn)
 
+				count := len(txState.SubscribedChannels)
 				resp.WriteString("*3\r\n")
 				resp.WriteString("$9\r\nsubscribe\r\n")
 				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(channel), channel))
