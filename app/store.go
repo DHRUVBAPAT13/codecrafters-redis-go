@@ -193,7 +193,7 @@ func (s *Store) ZCard(key string) int {
 }
 
 func (s *Store) ZScore(key, member string) (float64, bool) {
-	s.mu.Lock()
+	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	zs, exists := s.zsets[key]
