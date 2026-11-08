@@ -139,49 +139,58 @@ func compareStreamIDs(ms1, seq1, ms2, seq2 int64) int {
 }
 
 func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
-	s.mu.Lock()
+	finalID, err := func() (string, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 
-	stream, exists := s.streams[key]
-	if !exists {
-		stream = &Stream{
-			Entries: make([]StreamEntry, 0),
+		stream, exists := s.streams[key]
+		if !exists {
+			stream = &Stream{
+				Entries: make([]StreamEntry, 0),
+			}
+			s.streams[key] = stream
 		}
-		s.streams[key] = stream
-	}
 
-	var ms, seq int64
+		var ms, seq int64
 
-	if id == "*" {
-		nowMs := time.Now().UnixMilli()
-		if len(stream.Entries) > 0 {
-			lastEntry := stream.Entries[len(stream.Entries)-1]
-			if nowMs <= lastEntry.Ms {
-				ms = lastEntry.Ms
-				seq = lastEntry.Seq + 1
+		if id == "*" {
+			nowMs := time.Now().UnixMilli()
+			if len(stream.Entries) > 0 {
+				lastEntry := stream.Entries[len(stream.Entries)-1]
+				if nowMs <= lastEntry.Ms {
+					ms = lastEntry.Ms
+					seq = lastEntry.Seq + 1
+				} else {
+					ms = nowMs
+					seq = 0
+				}
 			} else {
 				ms = nowMs
 				seq = 0
 			}
 		} else {
-			ms = nowMs
-			seq = 0
-		}
-	} else {
-		parsedMs, parsedSeq, isAutoSeq, err := parseStreamID(id)
-		if err != nil {
-			return "", errors.New("ERR invalid stream ID specified as stream command argument")
-		}
+			parsedMs, parsedSeq, isAutoSeq, parseErr := parseStreamID(id)
+			if parseErr != nil {
+				return "", errors.New("ERR invalid stream ID specified as stream command argument")
+			}
 
-		ms = parsedMs
+			ms = parsedMs
 
-		if isAutoSeq {
-			if len(stream.Entries) > 0 {
-				lastEntry := stream.Entries[len(stream.Entries)-1]
-				if ms < lastEntry.Ms {
-					return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-				}
-				if ms == lastEntry.Ms {
-					seq = lastEntry.Seq + 1
+			if isAutoSeq {
+				if len(stream.Entries) > 0 {
+					lastEntry := stream.Entries[len(stream.Entries)-1]
+					if ms < lastEntry.Ms {
+						return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+					}
+					if ms == lastEntry.Ms {
+						seq = lastEntry.Seq + 1
+					} else {
+						if ms == 0 {
+							seq = 1
+						} else {
+							seq = 0
+						}
+					}
 				} else {
 					if ms == 0 {
 						seq = 1
@@ -190,41 +199,38 @@ func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
 					}
 				}
 			} else {
-				if ms == 0 {
-					seq = 1
-				} else {
-					seq = 0
+				seq = parsedSeq
+
+				if ms == 0 && seq == 0 {
+					return "", errors.New("ERR The ID specified in XADD must be greater than 0-0")
 				}
-			}
-		} else {
-			seq = parsedSeq
 
-			if ms == 0 && seq == 0 {
-				return "", errors.New("ERR The ID specified in XADD must be greater than 0-0")
-			}
-
-			if len(stream.Entries) > 0 {
-				lastEntry := stream.Entries[len(stream.Entries)-1]
-				if ms < lastEntry.Ms || (ms == lastEntry.Ms && seq <= lastEntry.Seq) {
-					return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+				if len(stream.Entries) > 0 {
+					lastEntry := stream.Entries[len(stream.Entries)-1]
+					if ms < lastEntry.Ms || (ms == lastEntry.Ms && seq <= lastEntry.Seq) {
+						return "", errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+					}
 				}
 			}
 		}
+
+		finalID := fmt.Sprintf("%d-%d", ms, seq)
+
+		stream.Entries = append(stream.Entries, StreamEntry{
+			ID:     finalID,
+			Ms:     ms,
+			Seq:    seq,
+			Fields: fields,
+		})
+
+		return finalID, nil
+	}()
+
+	if err != nil {
+		return "", err
 	}
 
-	finalID := fmt.Sprintf("%d-%d", ms, seq)
-
-	stream.Entries = append(stream.Entries, StreamEntry{
-		ID:     finalID,
-		Ms:     ms,
-		Seq:    seq,
-		Fields: fields,
-	})
-
-	s.mu.Unlock()
-
 	notifyStreamWaiter(key)
-
 	return finalID, nil
 }
 
