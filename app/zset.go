@@ -264,19 +264,36 @@ func (zsl *zskiplist) getNodeByRank(rank int) *zskiplistNode {
 // Range returns members between 0-based indices start and stop (inclusive)
 func (zs *ZSet) Range(start, stop int) []string {
 
+	n := zs.sl.length
 	if zs.sl.length == 0 || start >= zs.sl.length || start > stop {
 		return []string{}
 	}
 
+	// normalize negative start index
 	if start < 0 {
-		start = 0
+		start = start + n
+		if start < 0 {
+			start = 0
+		}
 	}
 
-	if stop >= zs.sl.length {
-		stop = zs.sl.length - 1
+	// normalize negative stop index
+	if stop < 0 {
+		stop = stop + n
+		if stop < 0 {
+			stop = 0
+		}
 	}
 
-	// 1-based rank for skiplist lookup
+	if start >= n || start < stop {
+		return []string{}
+	}
+
+	if stop >= n {
+		stop = n - 1
+	}
+
+	// 1-based rank for skiplist node lookup
 	firstNode := zs.sl.getNodeByRank(start + 1)
 	if firstNode == nil {
 		return []string{}
