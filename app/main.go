@@ -418,6 +418,37 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return fmt.Appendf(nil, ":%d\r\n", removed)
 
+	case "SETBIT":
+		if len(args) < 4 {
+			return []byte("-ERR wrong number of arguments for 'setbit' command\r\n")
+		}
+
+		key := args[1]
+		offset, err := strconv.Atoi(args[2])
+		if err != nil || offset < 0 {
+			return []byte("-ERR bit offset is not an integer or out of range\r\n")
+		}
+
+		bit, err := strconv.Atoi(args[3])
+		if err != nil || (bit != 0 && bit != 1) {
+			return []byte("-ERR bit is not the integer 0 or 1\r\n")
+		}
+
+		origBit, err := store.SetBit(key, offset, bit)
+		if err != nil {
+			return fmt.Appendf(nil, "-%s\r\n", err.Error())
+		}
+
+		watchManager.TouchKey(key)
+
+		rawCmd := EncodeRESPArray(args)
+		_ = aofManager.AppendCommand(rawCmd)
+		if config.Role == "master" {
+			replicaRegistry.Propagate(rawCmd)
+		}
+
+		return fmt.Appendf(nil, ":%d\r\n", origBit)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

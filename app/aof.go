@@ -217,5 +217,16 @@ func executeCommandForReplay(args []string, store *Store) {
 		if len(args) >= 3 {
 			store.ZRem(args[1], args[2:]...)
 		}
+
+	case "SETBIT":
+		if len(args) >= 4 {
+			key := args[1]
+			offset, err1 := strconv.Atoi(args[2])
+			bit, err2 := strconv.Atoi(args[3])
+
+			if err1 == nil && err2 == nil && (bit == 0 || bit == 1) && offset >= 0 {
+				_, _ = store.SetBit(key, offset, bit)
+			}
+		}
 	}
 }

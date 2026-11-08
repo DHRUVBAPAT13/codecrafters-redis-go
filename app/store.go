@@ -221,3 +221,51 @@ func (s *Store) ZRem(key string, members ...string) int {
 
 	return removed
 }
+
+func (s *Store) SetBit(key string, offset int, bit int) (int, error) {
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, exists := s.data[key]
+	var bytes []byte
+
+	if exists && !item.isExpired() {
+		bytes = []byte(item.value)
+	}
+
+	byteIndex := offset / 8
+	bitOffset := 7 - (offset % 8)
+	mask := byte(1 << bitOffset)
+
+	originalBit := 0
+
+	// expnad the byte slice if the target offset exceeds current capacity
+	if byteIndex >= len(bytes) {
+		newBytes := make([]byte, byteIndex+1)
+		copy(newBytes, bytes)
+		bytes = newBytes
+	} else {
+		if (bytes[byteIndex] & mask) != 0 {
+			originalBit = 1
+		}
+	}
+
+	if bit == 1 {
+		bytes[byteIndex] |= mask
+	} else {
+		bytes[byteIndex] &= ^mask
+	}
+
+	var expiresAt time.Time
+	if exists && !item.isExpired() {
+		expiresAt = item.expiresAt
+	}
+
+	s.data[key] = Item{
+		value:     string(bytes),
+		expiresAt: expiresAt,
+	}
+
+	return originalBit, nil
+}
