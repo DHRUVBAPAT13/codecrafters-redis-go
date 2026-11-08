@@ -304,7 +304,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 	case "PUBLISH":
 		if len(args) < 3 {
-			return []byte("-ERR worng number of arguments for 'publish' command\r\n")
+			return []byte("-ERR wrong number of arguments for 'publish' command\r\n")
 		}
 
 		channel := args[1]
@@ -650,6 +650,37 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			}
 			_, _ = conn.Write([]byte(resp.String()))
 			continue
+
+		case "UNSUBSCRIBE":
+			channels := args[1:]
+			// If no channel names provided, unsubscribe from all channels the client is subscribed to
+			if len(channels) == 0 {
+				for ch := range txState.SubscribedChannels {
+					channels = append(channels, ch)
+				}
+			}
+
+			// If client wasn't subscribed to any channel and sent bare UNSUBSCRIBE
+			if len(channels) == 0 {
+				resp := "*3\r\n$11\r\nunsubscribe\r\n$-1\r\n:0\r\n"
+				_, _ = conn.Write([]byte(resp))
+				continue
+			}
+
+			var resp strings.Builder
+			for _, channel := range channels {
+				delete(txState.SubscribedChannels, channel)
+				pubsubManager.Unsubscribe(channel, conn)
+
+				remainingCount := len(txState.SubscribedChannels)
+				resp.WriteString("*3\r\n")
+				resp.WriteString("$11\r\nunsubscribe\r\n")
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(channel), channel))
+				resp.WriteString(fmt.Sprintf(":%d\r\n", remainingCount))
+			}
+			_, _ = conn.Write([]byte(resp.String()))
+			continue
+
 		}
 
 		out := executeCommand(args, store, config)

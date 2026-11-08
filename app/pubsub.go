@@ -41,8 +41,8 @@ func (ps *PubSubMangager) UnsubscribeAll(conn net.Conn) {
 
 // SubscriberCount returns the number of subscribers for a given channel
 func (ps *PubSubMangager) SubscriberCount(channel string) int {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
 
 	return len(ps.channels[channel])
 }
@@ -73,4 +73,18 @@ func (ps *PubSubMangager) Publish(channel string, message string) int {
 	}
 
 	return len(subscribers)
+}
+
+func (ps *PubSubMangager) Unsubscribe(channel string, conn net.Conn) {
+
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	if subscribers, ok := ps.channels[channel]; ok {
+		delete(subscribers, conn)
+
+		if len(subscribers) == 0 {
+			delete(ps.channels, channel)
+		}
+	}
 }
