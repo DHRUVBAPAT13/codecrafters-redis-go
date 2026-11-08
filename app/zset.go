@@ -199,3 +199,42 @@ func (zs *ZSet) Add(score float64, member string) int {
 	return 1
 
 }
+
+func (zsl *zskiplist) getRank(score float64, member string) int {
+
+	rank := 0
+	x := zsl.header
+
+	for i := zsl.level - 1; i >= 0; i-- {
+		for x.level[i].forward != nil &&
+			(x.level[i].forward.score < score ||
+				(x.level[i].forward.score == score && x.level[i].forward.member <= member)) {
+
+			rank += x.level[i].span
+			x = x.level[i].forward
+		}
+
+		if x != nil && x.member == member {
+			return rank
+		}
+	}
+
+	return 0
+}
+
+// Rank returns the 0-based rank of memeber in sorted set, or -1 if not found
+func (zs *ZSet) Rank(member string) (int, bool) {
+
+	val, exists := zs.dict.Load(member)
+	if !exists {
+		return -1, false
+	}
+	score := val.(float64)
+
+	rank1Based := zs.sl.getRank(score, member)
+	if rank1Based == 0 {
+		return -1, false
+	}
+
+	return rank1Based - 1, true
+}

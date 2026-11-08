@@ -153,3 +153,16 @@ func (s *Store) ZAdd(key string, score float64, member string) int {
 
 	return zs.Add(score, member)
 }
+
+func (s *Store) ZRank(key, member string) (int, bool) {
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	zs, exists := s.zsets[key]
+	if !exists {
+		return -1, false
+	}
+
+	return zs.Rank(member)
+}

@@ -337,6 +337,21 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return fmt.Appendf(nil, ":%d\r\n", added)
 
+	case "ZRANK":
+		if len(args) < 3 {
+			return []byte("-ERR wrong number of arguments for 'zrank' command\r\n")
+		}
+
+		key := args[1]
+		member := args[2]
+
+		rank, exists := store.ZRank(key, member)
+		if !exists {
+			return []byte("$-1\r\n")
+		}
+
+		return fmt.Appendf(nil, ":%d\r\n", rank)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
