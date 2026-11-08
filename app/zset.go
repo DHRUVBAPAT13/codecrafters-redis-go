@@ -39,9 +39,15 @@ type zskiplist struct {
 
 func newZSkipList() *zskiplist {
 	header := newZSkipListNode(zsetSkipListMaxLevel, 0, "")
+	for i := 0; i < zsetSkipListMaxLevel; i++ {
+		header.level[i].span = 0
+		header.level[i].forward = nil
+	}
+
 	return &zskiplist{
 		header: header,
 		level:  1,
+		length: 0,
 	}
 }
 
@@ -254,7 +260,7 @@ func (zsl *zskiplist) getNodeByRank(rank int) *zskiplistNode {
 			traversed += x.level[i].span
 			x = x.level[i].forward
 		}
-		if traversed >= rank {
+		if traversed == rank {
 			return x
 		}
 	}
@@ -280,12 +286,9 @@ func (zs *ZSet) Range(start, stop int) []string {
 	// normalize negative stop index
 	if stop < 0 {
 		stop = stop + n
-		if stop < 0 {
-			stop = 0
-		}
 	}
 
-	if start >= n || start < stop {
+	if start >= n || start > stop || stop < 0 {
 		return []string{}
 	}
 
