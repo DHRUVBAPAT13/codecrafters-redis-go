@@ -65,7 +65,7 @@ func (ps *PubSubMangager) Publish(channel string, message string) int {
 	ps.mu.RUnlock()
 
 	// format : *3\r\n$7\r\nmessage\r\n$len(channel)\r\nchannel\r\n$len(message)\r\nmsg\r\n
-	payload := fmt.Sprintf("*3\r\n$7\r\nmessage\r\n$%d\r\nc%s\r\n$%d\r\n%s\r\n", len(channel), channel, len(message), message)
+	payload := fmt.Sprintf("*3\r\n$7\r\nmessage\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(channel), channel, len(message), message)
 	payloadBytes := []byte(payload)
 
 	for _, conn := range subscribers {
