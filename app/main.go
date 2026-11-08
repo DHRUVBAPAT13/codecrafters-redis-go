@@ -308,7 +308,8 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		}
 
 		channel := args[1]
-		count := pubsubManager.SubscriberCount(channel)
+		message := args[2]
+		count := pubsubManager.Publish(channel, message)
 		return fmt.Appendf(nil, ":%d\r\n", count)
 
 	default:

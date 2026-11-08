@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"sync"
 )
@@ -44,4 +45,32 @@ func (ps *PubSubMangager) SubscriberCount(channel string) int {
 	defer ps.mu.Unlock()
 
 	return len(ps.channels[channel])
+}
+
+// Publish delivers a message to all subscribers of a given channel
+func (ps *PubSubMangager) Publish(channel string, message string) int {
+	ps.mu.RLock()
+
+	subscribersMap, exists := ps.channels[channel]
+	if !exists || len(subscribersMap) == 0 {
+		ps.mu.RUnlock()
+		return 0
+	}
+
+	// make a snapshot of subscribers to release the lock while writing to the network
+	subscribers := make([]net.Conn, 0, len(subscribersMap))
+	for conn := range subscribersMap {
+		subscribers = append(subscribers, conn)
+	}
+	ps.mu.RUnlock()
+
+	// format : *3\r\nmessage\r\n$len(channel)\r\nchannel\r\n$len(message)\r\nmsg\r\n
+	payload := fmt.Sprintf("*3\r\nmessage\r\n$l%d\r\nc%s\r\n$%d\r\n%s\r\n", len(channel), channel, len(message), message)
+	payloadBytes := []byte(payload)
+
+	for _, conn := range subscribers {
+		_, _ = conn.Write([]byte(payloadBytes))
+	}
+
+	return len(subscribers)
 }
