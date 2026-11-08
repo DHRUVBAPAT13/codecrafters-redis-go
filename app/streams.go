@@ -140,7 +140,6 @@ func compareStreamIDs(ms1, seq1, ms2, seq2 int64) int {
 
 func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	stream, exists := s.streams[key]
 	if !exists {
@@ -222,7 +221,9 @@ func (s *Store) XAdd(key, id string, fields []StreamField) (string, error) {
 		Fields: fields,
 	})
 
-	go notifyStreamWaiter(key)
+	s.mu.Unlock()
+
+	notifyStreamWaiter(key)
 
 	return finalID, nil
 }
