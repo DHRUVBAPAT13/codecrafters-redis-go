@@ -391,7 +391,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		}
 
 		key := args[1]
-		member := args[3]
+		member := args[2]
 
 		score, exists := store.ZScore(key, member)
 		if !exists {
