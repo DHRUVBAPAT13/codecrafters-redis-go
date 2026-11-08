@@ -265,7 +265,7 @@ func (zsl *zskiplist) getNodeByRank(rank int) *zskiplistNode {
 func (zs *ZSet) Range(start, stop int) []string {
 
 	n := zs.sl.length
-	if zs.sl.length == 0 || start >= zs.sl.length || start > stop {
+	if n == 0 {
 		return []string{}
 	}
 
