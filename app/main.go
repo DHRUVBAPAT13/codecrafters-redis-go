@@ -579,6 +579,35 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return fmt.Appendf(nil, ":%d\r\n", addedCount)
 
+	case "GEOPOS":
+		if len(args) < 3 {
+			return []byte("-ERR wrong number of arguments for 'geopos' command\r\n")
+		}
+
+		key := args[1]
+		members := args[2:]
+
+		var resp strings.Builder
+		resp.WriteString(fmt.Sprintf("*%d\r\n", len(members)))
+
+		for _, member := range members {
+			score, exists := store.ZScore(key, member)
+			if !exists {
+				resp.WriteString("*-1\r\n")
+				continue
+			}
+
+			coords := decodeGeo(uint64(score))
+			lonStr := strconv.FormatFloat(coords.Longitude, 'f', -1, 64)
+			latStr := strconv.FormatFloat(coords.Latitude, 'f', -1, 64)
+
+			resp.WriteString("*2\r\n")
+			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(lonStr), lonStr))
+			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(latStr), latStr))
+
+		}
+
+		return []byte(resp.String())
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
