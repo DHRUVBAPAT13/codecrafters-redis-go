@@ -522,6 +522,14 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return fmt.Appendf(nil, ":%d\r\n", length)
 
+	case "GEOADD":
+		if len(args) < 5 || (len(args)-2)%3 != 0 {
+			return []byte("-ERR wrong number of arguments for 'geoadd' command\r\n")
+		}
+
+		// in this stage we only return the number of elements added
+		return []byte(":1\r\n")
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
