@@ -534,6 +534,8 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			maxLat = 85.05112878
 		)
 
+		key := args[1]
+
 		for i := 2; i < len(args); i += 3 {
 			lonStr := args[i]
 			latStr := args[i+1]
@@ -546,7 +548,22 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			}
 		}
 
-		return []byte(":1\r\n")
+		// 2. inset in the sorted set with score 0
+		addedCount := 0
+		for i := 2; i < len(args); i += 3 {
+			member := args[i+2]
+			addedCount += store.ZAdd(key, 0.0, member)
+		}
+
+		watchManager.TouchKey(key)
+
+		rawCmd := EncodeRESPArray(args)
+		_ = aofManager.AppendCommand(rawCmd)
+		if config.Role == "master" {
+			replicaRegistry.Propagate(rawCmd)
+		}
+
+		return fmt.Appendf(nil, "%d\r\n", addedCount)
 
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)

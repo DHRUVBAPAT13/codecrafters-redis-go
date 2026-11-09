@@ -233,5 +233,13 @@ func executeCommandForReplay(args []string, store *Store) {
 		if len(args) >= 4 {
 			_, _ = store.BitOp(args[1], args[2], args[3:]...)
 		}
+
+	case "GEOADD":
+		if len(args) >= 5 && (len(args)-2)%3 == 0 {
+			key := args[1]
+			for i := 2; i < len(args); i += 3 {
+				store.ZAdd(key, 0.0, args[i+2])
+			}
+		}
 	}
 }
