@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/bits"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -345,4 +346,65 @@ func (s *Store) BitCount(key string, hasRange bool, start, end int) int {
 	}
 
 	return count
+}
+
+func (s *Store) BitOp(op, destKey string, srcKeys ...string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	op = strings.ToUpper(op)
+	if op != "AND" {
+		return 0, errors.New("ERR syntax error")
+	}
+
+	if len(srcKeys) == 0 {
+		return 0, nil
+	}
+
+	// retrieve byte slices for all source keys
+	srcs := make([][]byte, len(srcKeys))
+	maxLen := 0
+
+	for i, key := range srcKeys {
+		if item, exists := s.data[key]; exists && !item.isExpired() {
+			srcs[i] = []byte(item.value)
+			if len(srcs[i]) > maxLen {
+				maxLen = len(srcs)
+			}
+		} else {
+			srcs[i] = []byte{}
+		}
+	}
+
+	if maxLen == 0 {
+		delete(s.data, destKey)
+		return 0, nil
+	}
+
+	destBytes := make([]byte, maxLen)
+
+	switch op {
+	case "AND":
+		// initialze with first source bytes
+		copy(destBytes, srcs[0])
+
+		// any missing bytes past the first source length remain 0x00
+		for j := 1; j < len(srcs); j++ {
+			for i := 0; i < maxLen; i++ {
+				var b byte
+
+				if i < len(srcs[j]) {
+					b = srcs[j][i]
+				}
+				destBytes[i] &= b
+			}
+		}
+	}
+
+	s.data[destKey] = Item{
+		value:     string(destBytes),
+		expiresAt: time.Time{},
+	}
+
+	return len(destBytes), nil
 }

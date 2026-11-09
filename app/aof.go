@@ -228,5 +228,10 @@ func executeCommandForReplay(args []string, store *Store) {
 				_, _ = store.SetBit(key, offset, bit)
 			}
 		}
+
+	case "BITOP":
+		if len(args) >= 4 {
+			_, _ = store.BitOp(args[1], args[2], args[3:]...)
+		}
 	}
 }

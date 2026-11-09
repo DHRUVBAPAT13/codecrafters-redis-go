@@ -498,6 +498,30 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		total := store.BitCount(key, hasRange, start, end)
 		return fmt.Appendf(nil, ":%d\r\n", total)
 
+	case "BITOP":
+		if len(args) < 4 {
+			return []byte("-ERR wrong number of arguments for 'bitop' command\r\n")
+		}
+
+		op := args[1]
+		destKey := args[2]
+		srcKeys := args[3:]
+
+		length, err := store.BitOp(op, destKey, srcKeys...)
+		if err != nil {
+			return fmt.Appendf(nil, "-%s\r\n", err.Error())
+		}
+
+		watchManager.TouchKey(destKey)
+
+		rawCmd := EncodeRESPArray(args)
+		_ = aofManager.AppendCommand(rawCmd)
+		if config.Role == "master" {
+			replicaRegistry.Propagate(rawCmd)
+		}
+
+		return fmt.Appendf(nil, ":%d\r\n", length)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
