@@ -608,6 +608,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		}
 
 		return []byte(resp.String())
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
