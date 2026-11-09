@@ -472,6 +472,32 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		length := store.StrLen(key)
 		return fmt.Appendf(nil, ":%d\r\n", length)
 
+	case "BITCOUNT":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number arguments for 'bitcount' command\r\n")
+		}
+
+		key := args[1]
+		hasRange := false
+		start := 0
+		end := 0
+
+		if len(args) >= 4 {
+			var err1, err2 error
+			start, err1 = strconv.Atoi(args[2])
+			end, err2 = strconv.Atoi(args[3])
+
+			if err1 != nil || err2 != nil {
+				return []byte("-ERR value is not an integer or out of range\r\n")
+			}
+			hasRange = true
+		} else if len(args) == 3 {
+			return []byte("-ERR syntax error\r\n")
+		}
+
+		total := store.BitCount(key, hasRange, start, end)
+		return fmt.Appendf(nil, ":%d\r\n", total)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

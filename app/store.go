@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"math/bits"
 	"strconv"
 	"sync"
 	"time"
@@ -305,4 +306,43 @@ func (s *Store) StrLen(key string) int {
 	}
 
 	return len(item.value)
+}
+
+func (s *Store) BitCount(key string, hasRange bool, start, end int) int {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	item, exists := s.data[key]
+	if !exists {
+		return 0
+	}
+
+	valBytes := []byte(item.value)
+	n := len(valBytes)
+	if n == 0 {
+		return 0
+	}
+
+	if !hasRange {
+		start = 0
+		end = n - 1
+	} else {
+		if start < 0 {
+			start = 0
+		}
+		if start >= n || start > end {
+			return 0
+		}
+		if end >= n {
+			end = n - 1
+		}
+	}
+
+	count := 0
+	for i := start; i <= end; i++ {
+		count += bits.OnesCount8(valBytes[i])
+	}
+
+	return count
 }
