@@ -536,29 +536,43 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		key := args[1]
 
+		// 1. validate all coordinate points
+		type geoItem struct {
+			lon    float64
+			lat    float64
+			member string
+		}
+		items := make([]geoItem, 0, (len(args)-2)/3)
+
 		for i := 2; i < len(args); i += 3 {
+
 			lonStr := args[i]
 			latStr := args[i+1]
+			member := args[i+2]
 
 			lon, errLon := strconv.ParseFloat(lonStr, 64)
 			lat, errLat := strconv.ParseFloat(latStr, 64)
 
-			if errLon != nil || errLat != nil || lon < minLon || lon > maxLon || lat < minLat || lat > maxLat {
-				return fmt.Appendf(nil, "-ERR invalid longitude,latitude pair %s,%s\r\n", lonStr, latStr)
+			if errLon != nil || errLat != nil || lon < geoMinLon || lat < geoMinLat || lon > geoMaxLon || lat > geoMaxLat {
+				return fmt.Appendf(nil, "-ERR invalid longitude, latitude pair %s,%s\r\n", lonStr, latStr)
 			}
+
+			items = append(items, geoItem{lon: lon, lat: lat, member: member})
 		}
 
-		// 2. inset in the sorted set with score 0
+		// 2. insert into sorted set with calculated score
 		addedCount := 0
-		for i := 2; i < len(args); i += 3 {
-			member := args[i+2]
-			addedCount += store.ZAdd(key, 0.0, member)
+		for _, item := range items {
+
+			score := float64(encodeGeo(item.lat, item.lon))
+			addedCount += store.ZAdd(key, score, item.member)
 		}
 
 		watchManager.TouchKey(key)
 
 		rawCmd := EncodeRESPArray(args)
 		_ = aofManager.AppendCommand(rawCmd)
+
 		if config.Role == "master" {
 			replicaRegistry.Propagate(rawCmd)
 		}

@@ -238,7 +238,14 @@ func executeCommandForReplay(args []string, store *Store) {
 		if len(args) >= 5 && (len(args)-2)%3 == 0 {
 			key := args[1]
 			for i := 2; i < len(args); i += 3 {
-				store.ZAdd(key, 0.0, args[i+2])
+
+				lon, errLon := strconv.ParseFloat(args[i], 64)
+				lat, errLat := strconv.ParseFloat(args[i+1], 64)
+
+				if errLon == nil && errLat == nil {
+					score := float64(encodeGeo(lat, lon))
+					store.ZAdd(key, score, args[i+2])
+				}
 			}
 		}
 	}
