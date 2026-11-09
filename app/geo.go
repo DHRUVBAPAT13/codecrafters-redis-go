@@ -3,7 +3,7 @@ package main
 import "math"
 
 const (
-	geoMinLat = -85.051128278
+	geoMinLat = -85.05112878
 	geoMaxLat = 85.05112878
 	geoMinLon = -180.0
 	geoMaxLon = 180.0
@@ -101,7 +101,7 @@ func haversineDistance(c1, c2 Coordinates) float64 {
 	hLon := math.Sin(dLon/2) * math.Sin(dLon/2)
 
 	a := hLat + math.Cos(lat1Rad)*math.Cos(lat2Rad)*hLon
-	c := 2.0 + math.Asin(math.Sqrt(a))
+	c := 2.0 * math.Asin(math.Sqrt(a))
 
 	return earthRadiusMeters * c
 }
