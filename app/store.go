@@ -353,7 +353,7 @@ func (s *Store) BitOp(op, destKey string, srcKeys ...string) (int, error) {
 	defer s.mu.Unlock()
 
 	op = strings.ToUpper(op)
-	if op != "AND" {
+	if op != "AND" && op != "OR" {
 		return 0, errors.New("ERR syntax error")
 	}
 
@@ -397,6 +397,12 @@ func (s *Store) BitOp(op, destKey string, srcKeys ...string) (int, error) {
 					b = srcs[j][i]
 				}
 				destBytes[i] &= b
+			}
+		}
+	case "OR":
+		for _, src := range srcs {
+			for i := 0; i < len(src); i++ {
+				destBytes[i] |= src[i]
 			}
 		}
 	}
