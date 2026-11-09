@@ -463,6 +463,15 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		bit := store.GetBit(key, offset)
 		return fmt.Appendf(nil, ":%d\r\n", bit)
 
+	case "STRLEN":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'strlen' command\r\n")
+		}
+
+		key := args[1]
+		length := store.StrLen(key)
+		return fmt.Appendf(nil, ":%d\r\n", length)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

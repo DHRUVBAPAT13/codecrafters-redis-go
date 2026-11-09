@@ -294,3 +294,15 @@ func (s *Store) GetBit(key string, offset int) int {
 
 	return 0
 }
+
+func (s *Store) StrLen(key string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	item, exists := s.data[key]
+	if !exists || item.isExpired() {
+		return 0
+	}
+
+	return len(item.value)
+}
