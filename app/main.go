@@ -563,7 +563,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			replicaRegistry.Propagate(rawCmd)
 		}
 
-		return fmt.Appendf(nil, "%d\r\n", addedCount)
+		return fmt.Appendf(nil, ":%d\r\n", addedCount)
 
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
