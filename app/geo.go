@@ -63,8 +63,8 @@ type Coordinates struct {
 
 func decodeGeo(geoCode uint64) Coordinates {
 
-	x := geoCode >> 1
-	y := geoCode
+	x := geoCode
+	y := geoCode >> 1
 
 	gridLatNumber := compactInt64toInt32(x)
 	gridLonNumber := compactInt64toInt32(y)
