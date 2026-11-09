@@ -527,7 +527,25 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			return []byte("-ERR wrong number of arguments for 'geoadd' command\r\n")
 		}
 
-		// in this stage we only return the number of elements added
+		const (
+			minLon = -180.0
+			maxLon = 180.0
+			minLat = -85.05112878
+			maxLat = 85.05112878
+		)
+
+		for i := 2; i < len(args); i += 3 {
+			lonStr := args[i]
+			latStr := args[i+1]
+
+			lon, errLon := strconv.ParseFloat(lonStr, 64)
+			lat, errLat := strconv.ParseFloat(latStr, 64)
+
+			if errLon != nil || errLat != nil || lon < minLon || lon > maxLon || lat < minLat || lat > maxLat {
+				return fmt.Appendf(nil, "-ERR invalid longitude,latitude pair %s,%s\r\n", lonStr, latStr)
+			}
+		}
+
 		return []byte(":1\r\n")
 
 	default:
