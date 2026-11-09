@@ -609,6 +609,30 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return []byte(resp.String())
 
+	case "GEODIST":
+		if len(args) < 4 {
+			return []byte("-ERR wrong number of arguments for 'geodist' command\r\n")
+		}
+
+		key := args[1]
+		member1 := args[2]
+		member2 := args[3]
+
+		score1, exists1 := store.ZScore(key, member1)
+		score2, exists2 := store.ZScore(key, member2)
+
+		if !exists1 || !exists2 {
+			return []byte("$-1\r\n")
+		}
+
+		coord1 := decodeGeo(uint64(score1))
+		coord2 := decodeGeo(uint64(score2))
+
+		dist := haversineDistance(coord1, coord2)
+		distStr := fmt.Sprintf("%.4f", dist)
+
+		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(distStr), distStr)
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
