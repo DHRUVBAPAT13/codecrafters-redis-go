@@ -10,6 +10,8 @@ const (
 
 	geoLatRange = geoMaxLat - geoMinLat
 	geoLonRange = geoMaxLon - geoMinLon
+
+	earthRadiusMeters = 6372797.560856
 )
 
 func spreadInt32toInt64(v uint32) uint64 {
@@ -80,8 +82,6 @@ func decodeGeo(geoCode uint64) Coordinates {
 	return Coordinates{Latitude: latitude, Longitude: longitude}
 }
 
-const earthRadiusMeters = 6372797.560856
-
 func degToRad(deg float64) float64 {
 
 	return deg * math.Pi / 180.0
@@ -92,7 +92,7 @@ func haversineDistance(c1, c2 Coordinates) float64 {
 	lat1Rad := degToRad(c1.Latitude)
 	lat2Rad := degToRad(c2.Latitude)
 	lon1Rad := degToRad(c1.Longitude)
-	lon2Rad := degToRad(c2.Latitude)
+	lon2Rad := degToRad(c2.Longitude)
 
 	dLat := lat2Rad - lat1Rad
 	dLon := lon2Rad - lon1Rad
