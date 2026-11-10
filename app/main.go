@@ -727,11 +727,48 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 		switch subCmd {
 		case "WHOAMI":
 			return []byte("$7\r\ndefault\r\n")
+
 		case "GETUSER":
 			if len(args) < 3 {
 				return []byte("-ERR wrong number of arguments for 'acl|getuser' command\r\n")
 			}
-			return []byte("*4\r\n$5\r\nflags\r\n*1\r\n$6\r\nnopass\r\n$9\r\npasswords\r\n*0\r\n")
+
+			username := args[2]
+			user, exists := aclManager.GetUser(username)
+			if !exists {
+				return []byte("$-1\r\n")
+			}
+
+			// 1. flags
+			var resp strings.Builder
+			resp.WriteString("*4\r\n")
+
+			resp.WriteString("$5\r\nflags\r\n")
+			if user.NoPass {
+				resp.WriteString("*1\r\n$6\r\nnopass\r\n")
+			} else {
+				resp.WriteString("*0\r\n")
+			}
+
+			// 2. password
+			resp.WriteString("$9\r\npasswords\r\n")
+			resp.WriteString(fmt.Sprintf(":%d\r\n", len(user.Passwords)))
+			for _, passHash := range user.Passwords {
+				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(passHash), passHash))
+			}
+			return []byte(resp.String())
+
+		case "SETUSER":
+			if len(args) < 3 {
+				return []byte("-ERR wrong number of arguments for 'acl|setuser' command\r\n")
+			}
+
+			username := args[2]
+			rules := args[3:]
+			_ = aclManager.SetUser(username, rules)
+
+			return []byte("+OK\r\n")
+
 		default:
 			return fmt.Appendf(nil, "-ERR unknown subcommand '%s'. Try ACL HELP.\r\n", strings.ToUpper(args[1]))
 		}
