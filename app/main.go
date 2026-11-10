@@ -793,7 +793,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			return []byte("+OK\r\n")
 		}
 
-		return []byte("WRONGPASS invalid username-password or user is disabled.\r\n")
+		return []byte("-WRONGPASS invalid username-password or user is disabled.\r\n")
 
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
