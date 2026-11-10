@@ -717,6 +717,20 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return []byte(resp.String())
 
+	case "ACL":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'acl' command\r\n")
+		}
+
+		subCmd := strings.ToUpper(args[1])
+
+		switch subCmd {
+		case "WHOAMI":
+			return []byte("$7\r\ndefault\r\n")
+		default:
+			return fmt.Appendf(nil, "-ERR unknown subcommand '%s'. Try ACL HELP.\r\n", strings.ToUpper(args[1]))
+		}
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}
