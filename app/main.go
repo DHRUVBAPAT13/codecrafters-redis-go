@@ -773,6 +773,28 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			return fmt.Appendf(nil, "-ERR unknown subcommand '%s'. Try ACL HELP.\r\n", strings.ToUpper(args[1]))
 		}
 
+	case "AUTH":
+		if len(args) < 2 {
+			return []byte("-ERR wrong number of arguments for 'auth' command\r\n")
+		}
+		username := "default"
+		password := ""
+
+		if len(args) == 2 {
+			// AUTH <passwords> (defaults to default user)
+			password = args[1]
+		} else {
+			// AUTH <username> <password>
+			username = args[1]
+			password = args[2]
+		}
+
+		if aclManager.Authenticate(username, password) {
+			return []byte("+OK\r\n")
+		}
+
+		return []byte("WRONGPASS invalid username-password or user is disabled.\r\n")
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

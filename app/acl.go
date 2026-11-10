@@ -74,3 +74,29 @@ func (m *ACLManager) SetUser(username string, rules []string) error {
 
 	return nil
 }
+
+func (m *ACLManager) Authenticate(username, password string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	user, exists := m.users[username]
+	if !exists {
+		return false
+	}
+
+	if user.NoPass {
+		return true
+	}
+
+	hash := sha256.Sum256([]byte(password))
+	hashHex := fmt.Sprintf("%x", hash)
+
+	for _, storedhash := range user.Passwords {
+		if storedhash == hashHex {
+			return true
+		}
+	}
+
+	return false
+
+}
