@@ -731,7 +731,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			if len(args) < 3 {
 				return []byte("-ERR wrong number of arguments for 'acl|getuser' command\r\n")
 			}
-			return []byte("*2\r\n$5\r\nflags\r\n*0\r\n")
+			return []byte("*2\r\n$5\r\nflags\r\n*1\r\n$6\r\nnopass\r\n")
 		default:
 			return fmt.Appendf(nil, "-ERR unknown subcommand '%s'. Try ACL HELP.\r\n", strings.ToUpper(args[1]))
 		}
