@@ -752,7 +752,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 			// 2. password
 			resp.WriteString("$9\r\npasswords\r\n")
-			resp.WriteString(fmt.Sprintf(":%d\r\n", len(user.Passwords)))
+			resp.WriteString(fmt.Sprintf("*%d\r\n", len(user.Passwords)))
 			for _, passHash := range user.Passwords {
 				resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(passHash), passHash))
 			}

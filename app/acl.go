@@ -45,8 +45,8 @@ func (m *ACLManager) GetUser(username string) (*ACLUser, bool) {
 }
 
 func (m *ACLManager) SetUser(username string, rules []string) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	user, exists := m.users[username]
 	if !exists {
