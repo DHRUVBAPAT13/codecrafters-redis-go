@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func executeCommand(args []string, store *Store, config ServerConfig) []byte {
+func executeCommand(args []string, store *Store, config ServerConfig, currentUser string) []byte {
 	if len(args) == 0 {
 		return nil
 	}
@@ -726,7 +726,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		switch subCmd {
 		case "WHOAMI":
-			return []byte("$7\r\ndefault\r\n")
+			return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(currentUser), currentUser)
 
 		case "GETUSER":
 			if len(args) < 3 {
@@ -793,7 +793,7 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 			return []byte("+OK\r\n")
 		}
 
-		return []byte("-WRONGPASS invalid username-password or user is disabled.\r\n")
+		return []byte("-WRONGPASS invalid username-password pair or user is disabled.\r\n")
 
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
@@ -971,10 +971,8 @@ func handleXREAD(conn net.Conn, store *Store, args []string) {
 }
 
 func handleClient(conn net.Conn, store *Store, config ServerConfig) {
-
 	isReplica := false
 	defer func() {
-		// clean up any channel subscriptions for this connection
 		pubsubManager.UnsubscribeAll(conn)
 		if !isReplica {
 			conn.Close()
@@ -983,6 +981,15 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 
 	reader := bufio.NewReader(conn)
 	txState := NewClientTxState()
+
+	// Initialize connection authentication state:
+	// A new connection starts authenticated as "default" if default has NoPass.
+	defaultUser, _ := aclManager.GetUser("default")
+	isAuthenticated := defaultUser != nil && defaultUser.NoPass
+	currentAuthUser := ""
+	if isAuthenticated {
+		currentAuthUser = "default"
+	}
 
 	for {
 		args, err := readRESPArray(reader)
@@ -1000,13 +1007,44 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 
 		cmd := strings.ToUpper(args[0])
 
-		// Subscribed mode check: if client is subscribed to one or more channels,
-		// only specific pub/sub management commands, PING, QUIT, and RESET are permitted.
+		// 0. Enforce authentication
+		if !isAuthenticated {
+			if cmd != "AUTH" && cmd != "QUIT" && cmd != "RESET" {
+				_, _ = conn.Write([]byte("-NOAUTH Authentication required.\r\n"))
+				continue
+			}
+		}
+
+		// Handle AUTH at connection level
+		if cmd == "AUTH" {
+			if len(args) < 2 {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'auth' command\r\n"))
+				continue
+			}
+
+			username := "default"
+			password := ""
+			if len(args) == 2 {
+				password = args[1]
+			} else {
+				username = args[1]
+				password = args[2]
+			}
+
+			if aclManager.Authenticate(username, password) {
+				isAuthenticated = true
+				currentAuthUser = username
+				_, _ = conn.Write([]byte("+OK\r\n"))
+			} else {
+				_, _ = conn.Write([]byte("-WRONGPASS invalid username-password pair or user is disabled.\r\n"))
+			}
+			continue
+		}
+
+		// Subscribed mode check
 		if len(txState.SubscribedChannels) > 0 {
 			switch cmd {
 			case "PING":
-				// If optional message argument provided (e.g., PING message), Redis echoes that message in index 2.
-				// By default, it returns ["pong", ""]
 				msg := ""
 				if len(args) > 1 {
 					msg = args[1]
@@ -1015,7 +1053,6 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 				_, _ = conn.Write([]byte(resp))
 				continue
 			case "SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "QUIT", "RESET":
-				// Allowed commands in subscribed mode
 			default:
 				errMsg := fmt.Sprintf("-ERR Can't execute '%s': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n", strings.ToLower(args[0]))
 				_, _ = conn.Write([]byte(errMsg))
@@ -1023,20 +1060,16 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			}
 		}
 
-		// 1. Transaction Interceptor:
+		// Transaction Interceptor
 		if txState.InTx {
 			switch cmd {
 			case "MULTI":
 				_, _ = conn.Write([]byte("-ERR MULTI calls can not be nested\r\n"))
 				continue
-
 			case "WATCH":
 				_, _ = conn.Write(txState.HandleWatch(args))
 				continue
-
 			case "EXEC", "DISCARD":
-				// fall through to execution below
-
 			default:
 				txState.Queue = append(txState.Queue, args)
 				_, _ = conn.Write([]byte("+QUEUED\r\n"))
@@ -1044,51 +1077,41 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			}
 		}
 
-		// 2. Command routing outside of tx or transaction control
+		// Command routing outside of transaction
 		switch cmd {
-
 		case "WATCH":
 			_, _ = conn.Write(txState.HandleWatch(args))
 			continue
-
 		case "UNWATCH":
 			_, _ = conn.Write(txState.HandleUnwatch())
 			continue
-
 		case "MULTI":
 			_, _ = conn.Write(txState.HandleMulti())
 			continue
-
 		case "EXEC":
 			if !txState.InTx {
 				_, _ = conn.Write([]byte("-ERR EXEC without MULTI\r\n"))
 				continue
 			}
-
 			if txState.IsDirty() {
 				txState.Reset()
 				_, _ = conn.Write([]byte("*-1\r\n"))
 				continue
 			}
-
 			if len(txState.Queue) == 0 {
 				_, _ = conn.Write([]byte("*0\r\n"))
 				txState.Reset()
 				continue
 			}
-
 			var resp strings.Builder
 			resp.WriteString(fmt.Sprintf("*%d\r\n", len(txState.Queue)))
-
 			for _, queueCmd := range txState.Queue {
-				out := executeCommand(queueCmd, store, config)
+				out := executeCommand(queueCmd, store, config, currentAuthUser)
 				resp.Write(out)
 			}
-
 			txState.Reset()
 			_, _ = conn.Write([]byte(resp.String()))
 			continue
-
 		case "DISCARD":
 			if !txState.InTx {
 				_, _ = conn.Write([]byte("-ERR DISCARD without MULTI\r\n"))
@@ -1097,24 +1120,19 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			txState.Reset()
 			_, _ = conn.Write([]byte("+OK\r\n"))
 			continue
-
 		case "PSYNC":
 			if err := HandleMasterPSYNC(conn, reader, config); err != nil {
 				fmt.Println("Error handling PSYNC:", err.Error())
 				return
 			}
-			// Mark as replica so defer does not close this socket!
 			isReplica = true
 			return
-
 		case "BLPOP":
 			handleBLPOP(conn, store, args)
 			continue
-
 		case "XREAD":
 			handleXREAD(conn, store, args)
 			continue
-
 		case "SUBSCRIBE":
 			if len(args) < 2 {
 				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'subscribe' command\r\n"))
@@ -1124,7 +1142,6 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			for _, channel := range args[1:] {
 				txState.SubscribedChannels[channel] = struct{}{}
 				pubsubManager.Subscribe(channel, conn)
-
 				count := len(txState.SubscribedChannels)
 				resp.WriteString("*3\r\n")
 				resp.WriteString("$9\r\nsubscribe\r\n")
@@ -1133,28 +1150,22 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			}
 			_, _ = conn.Write([]byte(resp.String()))
 			continue
-
 		case "UNSUBSCRIBE":
 			channels := args[1:]
-			// If no channel names provided, unsubscribe from all channels the client is subscribed to
 			if len(channels) == 0 {
 				for ch := range txState.SubscribedChannels {
 					channels = append(channels, ch)
 				}
 			}
-
-			// If client wasn't subscribed to any channel and sent bare UNSUBSCRIBE
 			if len(channels) == 0 {
 				resp := "*3\r\n$11\r\nunsubscribe\r\n$-1\r\n:0\r\n"
 				_, _ = conn.Write([]byte(resp))
 				continue
 			}
-
 			var resp strings.Builder
 			for _, channel := range channels {
 				delete(txState.SubscribedChannels, channel)
 				pubsubManager.Unsubscribe(channel, conn)
-
 				remainingCount := len(txState.SubscribedChannels)
 				resp.WriteString("*3\r\n")
 				resp.WriteString("$11\r\nunsubscribe\r\n")
@@ -1163,10 +1174,9 @@ func handleClient(conn net.Conn, store *Store, config ServerConfig) {
 			}
 			_, _ = conn.Write([]byte(resp.String()))
 			continue
-
 		}
 
-		out := executeCommand(args, store, config)
+		out := executeCommand(args, store, config, currentAuthUser)
 		if out != nil {
 			_, _ = conn.Write(out)
 		}

@@ -55,6 +55,7 @@ func (m *ACLManager) SetUser(username string, rules []string) error {
 			NoPass:    false,
 			Passwords: make([]string, 0),
 		}
+		m.users[username] = user
 	}
 
 	for _, rule := range rules {

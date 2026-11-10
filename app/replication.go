@@ -482,7 +482,7 @@ func StartReplicationHandshake(config ServerConfig, store *Store) {
 			continue
 		}
 
-		executeCommand(args, store, config)
+		executeCommand(args, store, config, "default")
 		processedOffset += cmdBytes
 	}
 }
