@@ -633,6 +633,90 @@ func executeCommand(args []string, store *Store, config ServerConfig) []byte {
 
 		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(distStr), distStr)
 
+	case "GEOSEARCH":
+		if len(args) < 7 {
+			return []byte("-ERR wrong number of arguments for 'geosearch' command\r\n")
+		}
+
+		key := args[1]
+		var centerLon, centerLat float64
+		var radius float64
+		var unit string
+
+		hasFromLonLat := false
+		hasByRadius := false
+
+		for i := 2; i < len(args); i++ {
+			token := strings.ToUpper(args[i])
+
+			switch token {
+			case "FROMLONLAT":
+
+				var err1, err2 error
+				centerLon, err1 = strconv.ParseFloat(args[i+1], 64)
+				centerLat, err2 = strconv.ParseFloat(args[i+2], 64)
+
+				if err1 != nil || err2 != nil {
+					return []byte("-ERR invalid longitude, latitude pair\r\n")
+				}
+				hasFromLonLat = true
+				i += 2
+
+			case "BYRADIUS":
+				if i+2 >= len(args) {
+					return []byte("-ERR synatx error\r\n")
+				}
+				var err error
+				radius, err = strconv.ParseFloat(args[i+1], 64)
+
+				if err != nil || radius < 0 {
+					return []byte("-ERR value is not a valid float\r\n")
+				}
+				unit = args[i+2]
+				hasByRadius = true
+				i += 2
+			}
+		}
+
+		if !hasByRadius || !hasFromLonLat {
+			return []byte("-ERR syntax error\r\n")
+		}
+
+		radiusMeters, err := parseRadiusToMeters(radius, unit)
+		if err != nil {
+			return []byte("-ERR syntax error\r\n")
+		}
+
+		members := store.GetAllZSetMembers(key)
+		if len(members) == 0 {
+			return []byte("*0\r\n")
+		}
+
+		centerCoord := Coordinates{
+			Latitude:  centerLat,
+			Longitude: centerLon,
+		}
+
+		var matched []string
+		for member, score := range members {
+
+			memberCoord := decodeGeo(uint64(score))
+			dist := haversineDistance(centerCoord, memberCoord)
+
+			if dist <= radiusMeters {
+				matched = append(matched, member)
+			}
+		}
+
+		var resp strings.Builder
+		resp.WriteString(fmt.Sprintf("*%d\r\n", len(matched)))
+
+		for _, m := range matched {
+			resp.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(m), m))
+		}
+
+		return []byte(resp.String())
+
 	default:
 		return fmt.Appendf(nil, "-ERR unknown command '%s'\r\n", cmd)
 	}

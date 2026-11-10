@@ -1,6 +1,10 @@
 package main
 
-import "math"
+import (
+	"errors"
+	"math"
+	"strings"
+)
 
 const (
 	geoMinLat = -85.05112878
@@ -104,4 +108,20 @@ func haversineDistance(c1, c2 Coordinates) float64 {
 	c := 2.0 * math.Asin(math.Sqrt(a))
 
 	return earthRadiusMeters * c
+}
+
+func parseRadiusToMeters(radius float64, unit string) (float64, error) {
+
+	switch strings.ToLower(unit) {
+	case "m":
+		return radius, nil
+	case "km":
+		return radius * 1000.0, nil
+	case "mi":
+		return radius * 1609.34, nil
+	case "ft":
+		return radius * 0.3048, nil
+	default:
+		return 0, errors.New("unsupported unit")
+	}
 }

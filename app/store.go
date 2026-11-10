@@ -414,3 +414,21 @@ func (s *Store) BitOp(op, destKey string, srcKeys ...string) (int, error) {
 
 	return len(destBytes), nil
 }
+
+func (s *Store) GetAllZSetMembers(key string) map[string]float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	zs, exists := s.zsets[key]
+	if !exists {
+		return nil
+	}
+
+	result := make(map[string]float64)
+	zs.dict.Range(func(key, value any) bool {
+		result[key.(string)] = value.(float64)
+		return true
+	})
+
+	return result
+}
